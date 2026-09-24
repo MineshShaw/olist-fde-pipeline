@@ -1,0 +1,67 @@
+import pytest
+import pandas as pd
+import sqlite3
+import requests
+from unittest.mock import patch, MagicMock
+from src.extract import DataExtractor, ExtractionError
+
+@pytest.fixture
+def extractor():
+    """Fixture to provide a configured DataExtractor instance."""
+    return DataExtractor(data_dir="mock_data", api_url="http://mock-api.local")
+
+@patch("src.extract.pd.read_csv")
+def test_extract_csv_success(mock_read_csv, extractor):
+    mock_df = pd.DataFrame({"order_id": ["A1", "B2"], "status": ["delivered", "shipped"]})
+    mock_read_csv.return_value = mock_df
+    
+    result = extractor.extract_csv("raw/mock_orders.csv")
+    
+    mock_read_csv.assert_called_once()
+    assert len(result) == 2
+    assert "order_id" in result.columns
+
+@patch("src.extract.pd.read_csv", side_effect=FileNotFoundError("File missing"))
+def test_extract_csv_failure(mock_read_csv, extractor):
+    with pytest.raises(ExtractionError, match="CSV Extraction failed"):
+        extractor.extract_csv("raw/missing.csv")
+
+@patch("src.extract.sqlite3.connect")
+@patch("src.extract.pd.read_sql_query")
+def test_extract_sqlite_success(mock_read_sql, mock_connect, extractor):
+    mock_df = pd.DataFrame({"item_id": [1, 2], "price": [10.5, 20.0]})
+    mock_read_sql.return_value = mock_df
+    
+    # Mock the context manager for sqlite3.connect
+    mock_conn = MagicMock()
+    mock_connect.return_value.__enter__.return_value = mock_conn
+
+    result = extractor.extract_sqlite("SELECT * FROM items", "raw/mock.db")
+    
+    mock_connect.assert_called_once()
+    mock_read_sql.assert_called_once_with("SELECT * FROM items", mock_conn)
+    assert len(result) == 2
+
+@patch("src.extract.requests.get")
+def test_extract_api_success(mock_get, extractor):
+    # Setup mock HTTP response
+    mock_response = MagicMock()
+    mock_response.json.return_value = [{"payment_id": "P1", "value": 100}, {"payment_id": "P2", "value": 150}]
+    mock_response.raise_for_status = MagicMock()
+    mock_get.return_value = mock_response
+    
+    result = extractor.extract_api("/mock_payments")
+    
+    mock_get.assert_called_once_with("http://mock-api.local/mock_payments", timeout=10)
+    mock_response.raise_for_status.assert_called_once()
+    assert len(result) == 2
+    assert result.iloc[0]["payment_id"] == "P1"
+
+@patch("src.extract.requests.get")
+def test_extract_api_http_error(mock_get, extractor):
+    mock_response = MagicMock()
+    mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError("404 Not Found")
+    mock_get.return_value = mock_response
+    
+    with pytest.raises(ExtractionError, match="API Extraction failed"):
+        extractor.extract_api("/bad_endpoint")
