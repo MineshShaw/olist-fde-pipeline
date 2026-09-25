@@ -6,10 +6,17 @@ from typing import Optional
 from src.logger import PipelineLogger, default_logger
 
 class DataVisualizer:
-    def __init__(self, viz_dir: Path, logger: Optional[PipelineLogger] = None):
-        self.viz_dir = viz_dir
+    def __init__(
+        self,
+        viz_dir: Optional[Path] = None,
+        logger: Optional[PipelineLogger] = None,
+        output_dir: Optional[str] = None,
+    ):
+        self.viz_dir = Path(output_dir) if output_dir is not None else viz_dir
+        if self.viz_dir is None:
+            raise ValueError("A visualization output directory is required.")
         self.logger = logger or default_logger()
-        self.logger.info(f"Initialized data visualizer for directory: {viz_dir}.")
+        self.logger.info(f"Initialized data visualizer for directory: {self.viz_dir}.")
         self.logger.info("Configuring seaborn visualization theme.")
         sns.set_theme(style="whitegrid")
 

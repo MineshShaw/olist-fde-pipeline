@@ -1,4 +1,6 @@
 import argparse
+from pathlib import Path
+from typing import Optional
 from src.config import PipelineConfig
 from src.extract import DataExtractor
 from src.logger import PipelineLogger
@@ -7,10 +9,17 @@ from src.model import DataModeler
 from src.visualize import DataVisualizer
 
 class PipelineOrchestrator:
-    def __init__(self, run_date: str, config: PipelineConfig):
+    def __init__(
+        self,
+        run_date: str,
+        config: Optional[PipelineConfig] = None,
+        base_output_dir: Optional[str] = None,
+    ):
         self.run_date = run_date
-        self.config = config
-        self.logger = PipelineLogger(config, run_date)
+        self.config = config or PipelineConfig(
+            base_output_dir=Path(base_output_dir) if base_output_dir is not None else PipelineConfig().base_output_dir
+        )
+        self.logger = PipelineLogger(self.config, run_date)
         self.logger.info(f"Initializing pipeline orchestrator for run date {run_date}.")
         
         # 1. Define Subdirectories
@@ -38,7 +47,7 @@ class PipelineOrchestrator:
             raw_data = extractor.run_all()
             
             self.logger.info("Counting raw orders for reconciliation.")
-            raw_orders_count = len(raw_data['orders'])
+            raw_orders_count = len(raw_data.get('orders', []))
             
             # Validate
             self.logger.info("Initializing validation stage.")
