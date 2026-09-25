@@ -1,56 +1,97 @@
+import argparse
 import logging
-from pathlib import Path
+from src.config import PipelineConfig
 from src.extract import DataExtractor
 from src.validate import DataValidator
 from src.model import DataModeler
+from src.visualize import DataVisualizer
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class PipelineOrchestrator:
-    def __init__(self, output_dir: str = "output"):
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, run_date: str, config: PipelineConfig):
+        self.run_date = run_date
+        self.config = config
         
+        # 1. Define Subdirectories
+        self.run_dir = self.config.base_output_dir / self.run_date
+        self.logs_dir = self.run_dir / "logs"
+        self.data_dir = self.run_dir / "data"
+        self.viz_dir = self.run_dir / "visualizations"
+        
+        # 2. Create them safely
+        for directory in [self.logs_dir, self.data_dir, self.viz_dir]:
+            directory.mkdir(parents=True, exist_ok=True)
+            
+        self._setup_logging()
+        
+    def _setup_logging(self):
+        logger.handlers = []
+        logger.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
+        
+        # Route log file specifically to the /logs subdirectory
+        fh = logging.FileHandler(self.logs_dir / "pipeline.log")
+        fh.setFormatter(formatter)
+        logger.addHandler(fh)
+        
+        ch = logging.StreamHandler()
+        ch.setFormatter(formatter)
+        logger.addHandler(ch)
+
     def run(self):
         try:
-            logger.info("--- Starting Dependable Olist Pipeline ---")
+            logger.info(f"--- Starting Dependable Olist Pipeline for {self.run_date} ---")
             
-            # 1. Extraction
-            extractor = DataExtractor()
+            # Extract
+            extractor = DataExtractor(self.config)
             raw_data = extractor.run_all()
             
-            # 2. Validation
+            raw_orders_count = len(raw_data['orders'])
+            
+            # Validate
             validator = DataValidator()
             validated_data = validator.run_all(raw_data)
             
-            if 'orders' not in validated_data or validated_data['orders']['clean'].empty:
-                logger.error("No valid orders available to model. Halting pipeline.")
+            clean_orders = validated_data['orders']['clean']
+            anomaly_orders = validated_data['orders']['anomalies']
+            
+            # --- DATA RECONCILIATION CHECK ---
+            reconciled_count = len(clean_orders) + len(anomaly_orders)
+            if reconciled_count != raw_orders_count:
+                logger.critical(f"Data leak detected! Raw: {raw_orders_count}, Clean+Anomaly: {reconciled_count}")
+                raise ValueError("Validation layer dropped records silently.")
+            logger.info(f"Reconciliation successful: {len(clean_orders)} clean + {len(anomaly_orders)} anomalies == {raw_orders_count} raw.")
+            
+            if clean_orders.empty:
+                logger.error("No valid orders available. Halting.")
                 return
             
-            # 3. Modeling
+            # Model & Visualize
             modeler = DataModeler()
-            event_model = modeler.process_event_model(validated_data['orders']['clean'])
+            event_model = modeler.process_event_model(clean_orders)
             kpi_dashboard = modeler.generate_kpi_dashboard(event_model)
             
-            # 4. Output Generation (Dependable Evidence)
-            # Using safe overwrites for rerun-ability
-            kpi_path = self.output_dir / "kpi_dashboard.csv"
-            event_path = self.output_dir / "clean_event_model.csv"
-            anomalies_path = self.output_dir / "flagged_anomalies.csv"
+            visualizer = DataVisualizer(viz_dir=self.viz_dir)
+            visualizer.generate_insights(event_model)
             
-            kpi_dashboard.to_csv(kpi_path, index=False)
-            event_model.to_csv(event_path, index=False)
+            # Save Outputs to /data
+            kpi_dashboard.to_csv(self.data_dir / "kpi_dashboard.csv", index=False)
+            event_model.to_csv(self.data_dir / "clean_event_model.csv", index=False)
+            if not anomaly_orders.empty:
+                anomaly_orders.to_csv(self.data_dir / "flagged_anomalies.csv", index=False)
             
-            if not validated_data['orders']['anomalies'].empty:
-                validated_data['orders']['anomalies'].to_csv(anomalies_path, index=False)
-            
-            logger.info(f"Pipeline succeeded. KPIs saved to {kpi_path}")
+            logger.info(f"Pipeline succeeded. Artifacts routed to {self.run_dir}")
             
         except Exception as e:
-            logger.critical(f"Pipeline experienced a fatal failure: {e}")
+            logger.critical(f"Pipeline failed: {e}")
             raise
-            
+
 if __name__ == "__main__":
-    orchestrator = PipelineOrchestrator()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run-date", type=str, required=True, help="Run date in YYYY-MM-DD")
+    args = parser.parse_args()
+    
+    config = PipelineConfig()
+    orchestrator = PipelineOrchestrator(run_date=args.run_date, config=config)
     orchestrator.run()

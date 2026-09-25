@@ -43,17 +43,30 @@ def test_extract_sqlite_success(mock_read_sql, mock_connect, extractor):
     assert len(result) == 2
 
 @patch("src.extract.requests.get")
-def test_extract_api_success(mock_get, extractor):
-    # Setup mock HTTP response
-    mock_response = MagicMock()
-    mock_response.json.return_value = [{"payment_id": "P1", "value": 100}, {"payment_id": "P2", "value": 150}]
-    mock_response.raise_for_status = MagicMock()
-    mock_get.return_value = mock_response
+def test_extract_api_pagination_success(mock_get, extractor):
+    # Mock a 2-page API response
+    def mock_api_response(url, timeout):
+        mock_resp = MagicMock()
+        if "page=1" in url:
+            mock_resp.json.return_value = {
+                "data": [{"payment_id": "P1"}],
+                "total_pages": 2,
+                "current_page": 1
+            }
+        else:
+            mock_resp.json.return_value = {
+                "data": [{"payment_id": "P2"}],
+                "total_pages": 2,
+                "current_page": 2
+            }
+        mock_resp.raise_for_status = MagicMock()
+        return mock_resp
+
+    mock_get.side_effect = mock_api_response
     
-    result = extractor.extract_api("/mock_payments")
+    result = extractor.extract_api("/payments")
     
-    mock_get.assert_called_once_with("http://mock-api.local/mock_payments", timeout=10)
-    mock_response.raise_for_status.assert_called_once()
+    assert mock_get.call_count == 2
     assert len(result) == 2
     assert result.iloc[0]["payment_id"] == "P1"
 
@@ -64,4 +77,5 @@ def test_extract_api_http_error(mock_get, extractor):
     mock_get.return_value = mock_response
     
     with pytest.raises(ExtractionError, match="API Extraction failed"):
+        # The script will attempt page 1 and fail immediately
         extractor.extract_api("/bad_endpoint")
