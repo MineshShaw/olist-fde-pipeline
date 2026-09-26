@@ -1,11 +1,40 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 import json
 import os
 import math
+import threading
+import time
 
 app = FastAPI(title="Olist FDE Paginated API")
 
 API_DIR = "./data/api"
+RATE_LIMIT_REQUESTS = int(os.getenv("OLIST_API_RATE_LIMIT", "5"))
+RATE_LIMIT_WINDOW_SECONDS = float(os.getenv("OLIST_API_RATE_WINDOW", "1"))
+_request_history = {}
+_rate_limit_lock = threading.Lock()
+
+
+def enforce_rate_limit(request: Request):
+    client_key = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    window_start = now - RATE_LIMIT_WINDOW_SECONDS
+
+    with _rate_limit_lock:
+        recent_requests = [
+            timestamp
+            for timestamp in _request_history.get(client_key, [])
+            if timestamp > window_start
+        ]
+        if len(recent_requests) >= RATE_LIMIT_REQUESTS:
+            retry_after = max(1, math.ceil(recent_requests[0] + RATE_LIMIT_WINDOW_SECONDS - now))
+            _request_history[client_key] = recent_requests
+            raise HTTPException(
+                status_code=429,
+                detail="Rate limit exceeded",
+                headers={"Retry-After": str(retry_after)},
+            )
+        recent_requests.append(now)
+        _request_history[client_key] = recent_requests
 
 def load_json_as_list(filename):
     filepath = os.path.join(API_DIR, filename)
@@ -39,9 +68,11 @@ def paginate_data(data_list, page: int, page_size: int):
     }
 
 @app.get("/payments")
-def get_payments(page: int = Query(1, ge=1), page_size: int = Query(500, ge=1)):
+def get_payments(request: Request, page: int = Query(1, ge=1), page_size: int = Query(500, ge=1)):
+    enforce_rate_limit(request)
     return paginate_data(payments_data, page, page_size)
 
 @app.get("/geolocation")
-def get_geolocation(page: int = Query(1, ge=1), page_size: int = Query(500, ge=1)):
+def get_geolocation(request: Request, page: int = Query(1, ge=1), page_size: int = Query(500, ge=1)):
+    enforce_rate_limit(request)
     return paginate_data(geo_data, page, page_size)

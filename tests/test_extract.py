@@ -79,3 +79,57 @@ def test_extract_api_http_error(mock_get, extractor):
     with pytest.raises(ExtractionError, match="API Extraction failed"):
         # The script will attempt page 1 and fail immediately
         extractor.extract_api("/bad_endpoint")
+
+
+def test_run_all_extracts_every_transformed_dataset(extractor):
+    from unittest.mock import call
+
+    frame = pd.DataFrame({"value": [1]})
+    sqlite_extract = MagicMock(side_effect=[frame] * 5)
+    extractor.extract_csv = MagicMock(return_value=frame)
+    extractor.extract_sqlite = sqlite_extract
+    extractor.extract_api = MagicMock(return_value=frame)
+
+    result = extractor.run_all()
+
+    assert set(result) == {
+        "orders",
+        "reviews",
+        "items",
+        "customers",
+        "sellers",
+        "products",
+        "category_translation",
+        "payments",
+        "geolocation",
+    }
+    assert sqlite_extract.call_args_list == [
+        call(),
+        call("SELECT * FROM customers", filename="raw/ecommerce.db"),
+        call("SELECT * FROM sellers", filename="raw/ecommerce.db"),
+        call("SELECT * FROM products", filename="raw/ecommerce.db"),
+        call("SELECT * FROM category_translation", filename="raw/ecommerce.db"),
+    ]
+
+
+@patch("src.extract.time.sleep")
+@patch("src.extract.requests.get")
+def test_extract_api_retries_rate_limit(mock_get, mock_sleep):
+    logger = MagicMock()
+    extractor = DataExtractor(data_dir="mock_data", api_url="http://mock-api.local", logger=logger)
+    rate_limited = MagicMock(status_code=429, headers={"Retry-After": "0"})
+    rate_limited.raise_for_status.side_effect = requests.exceptions.HTTPError("429 Too Many Requests")
+    success = MagicMock(status_code=200, headers={})
+    success.json.return_value = {
+        "data": [{"payment_id": "P1"}],
+        "total_pages": 1,
+        "total_records": 1,
+    }
+    mock_get.side_effect = [rate_limited, success]
+
+    result = extractor.extract_api("/payments")
+
+    assert len(result) == 1
+    assert mock_get.call_count == 2
+    mock_sleep.assert_called_once_with(0.0)
+    assert any("retry 1/3" in call.args[0] for call in logger.warn.call_args_list)

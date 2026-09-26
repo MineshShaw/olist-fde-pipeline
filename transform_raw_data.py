@@ -5,7 +5,7 @@ import os
 
 SOURCE_DIR = "./data/source_zip/olist"
 RAW_DIR = "./data/raw"
-API_DIR = "./data/api_mock"
+API_DIR = "./data/api"
 
 os.makedirs(RAW_DIR, exist_ok=True)
 os.makedirs(API_DIR, exist_ok=True)

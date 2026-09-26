@@ -19,3 +19,4 @@ env/
 
 data/source_zip/olist/*.csv
 output/*
+testing.ipynb
