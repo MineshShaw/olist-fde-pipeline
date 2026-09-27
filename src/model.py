@@ -1,5 +1,6 @@
 import pandas as pd
 from typing import Optional
+from src.config import PipelineConfig
 from src.logger import PipelineLogger, default_logger
 
 class DataModeler:
@@ -7,7 +8,12 @@ class DataModeler:
     Class 7 & 8 Modeling Layer: Transforms clean operational data into 
     event-based chronologies and business KPIs.
     """
-    def __init__(self, logger: Optional[PipelineLogger] = None):
+    def __init__(
+        self,
+        logger: Optional[PipelineLogger] = None,
+        config: Optional[PipelineConfig] = None,
+    ):
+        self.config = config or PipelineConfig()
         self.logger = logger or default_logger()
         self.logger.info("Initialized data modeler.")
 
@@ -18,11 +24,8 @@ class DataModeler:
         df = clean_orders.copy()
         
         # Ensure all timestamps are datetime objects
-        cols = [
-            'order_purchase_timestamp', 'order_approved_at', 
-            'order_delivered_carrier_date', 'order_delivered_customer_date', 
-            'order_estimated_delivery_date'
-        ]
+        timestamps = self.config.timestamp_columns
+        cols = list(timestamps.values())
         self.logger.info("Starting loop over event timestamp columns.")
         for col in cols:
             if col in df.columns:
@@ -33,24 +36,30 @@ class DataModeler:
                 
         # Primary KPI Flag: Was it delivered past the estimated date?
         self.logger.info("Calculating late delivery flag.")
-        df['is_late'] = df['order_delivered_customer_date'] > df['order_estimated_delivery_date']
+        df['is_late'] = df[timestamps["delivery"]] > df[timestamps["estimate"]]
         
         # Duration Math (in days)
-        if 'order_approved_at' in df.columns and 'order_purchase_timestamp' in df.columns:
+        if timestamps["approval"] in df.columns and timestamps["purchase"] in df.columns:
             self.logger.info("Calculating approval duration in days.")
-            df['approval_days'] = (df['order_approved_at'] - df['order_purchase_timestamp']).dt.total_seconds() / 86400.0
+            df['approval_days'] = (
+                df[timestamps["approval"]] - df[timestamps["purchase"]]
+            ).dt.total_seconds() / self.config.seconds_per_day
         else:
             self.logger.info("Skipping approval duration because required columns are missing.")
             
-        if 'order_delivered_carrier_date' in df.columns and 'order_approved_at' in df.columns:
+        if timestamps["dispatch"] in df.columns and timestamps["approval"] in df.columns:
             self.logger.info("Calculating dispatch duration in days.")
-            df['dispatch_days'] = (df['order_delivered_carrier_date'] - df['order_approved_at']).dt.total_seconds() / 86400.0
+            df['dispatch_days'] = (
+                df[timestamps["dispatch"]] - df[timestamps["approval"]]
+            ).dt.total_seconds() / self.config.seconds_per_day
         else:
             self.logger.info("Skipping dispatch duration because required columns are missing.")
             
-        if 'order_delivered_customer_date' in df.columns and 'order_delivered_carrier_date' in df.columns:
+        if timestamps["delivery"] in df.columns and timestamps["dispatch"] in df.columns:
             self.logger.info("Calculating transit duration in days.")
-            df['transit_days'] = (df['order_delivered_customer_date'] - df['order_delivered_carrier_date']).dt.total_seconds() / 86400.0
+            df['transit_days'] = (
+                df[timestamps["delivery"]] - df[timestamps["dispatch"]]
+            ).dt.total_seconds() / self.config.seconds_per_day
         else:
             self.logger.info("Skipping transit duration because required columns are missing.")
             
@@ -61,15 +70,20 @@ class DataModeler:
         """Aggregates the event model into the final business KPIs."""
         self.logger.info("Generating KPI dashboard.")
         
-        self.logger.info("Calculating total order count.")
-        total_orders = len(event_model)
+        timestamps = self.config.timestamp_columns
+        comparable_orders = event_model[
+            timestamps["delivery"]
+        ].notna() & event_model[timestamps["estimate"]].notna()
+        self.logger.info("Calculating comparable delivered order count.")
+        total_orders = int(comparable_orders.sum())
         self.logger.info("Calculating late order count.")
-        late_orders = event_model['is_late'].sum()
+        late_mask = comparable_orders & event_model["is_late"].fillna(False)
+        late_orders = int(late_mask.sum())
         self.logger.info("Calculating late order percentage.")
         pct_late = (late_orders / total_orders) * 100 if total_orders > 0 else 0
         
         self.logger.info("Filtering late orders for duration metrics.")
-        late_df = event_model[event_model['is_late']]
+        late_df = event_model[late_mask]
         
         # Isolating where the delay happens for late orders
         self.logger.info("Calculating average approval duration for late orders.")

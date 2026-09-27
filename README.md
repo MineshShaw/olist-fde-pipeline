@@ -1,165 +1,203 @@
-# Olist Delivery Reliability Pipeline
+# Olist E-commerce Delivery Reliability Pipeline
 
-## Problem statement and stakeholders
+A configurable, batch-oriented data pipeline for measuring late deliveries and identifying whether fulfillment delays are concentrated in approval, seller dispatch, or carrier transit.
 
-Customer satisfaction is dropping because orders are arriving after the promised delivery date. This project gives Operations, Customer Experience, Seller Management, and Logistics stakeholders a dependable way to identify where late orders accumulate: approval, seller dispatch, or carrier transit.
+## Business problem and stakeholders
 
-The pipeline preserves the raw order population, validates chronological business rules, flags exceptions instead of silently dropping them, and produces date-partitioned evidence that can be reviewed by business and engineering teams.
+Customer satisfaction is dropping because orders are arriving later than the estimated delivery date. **Logistics Managers** and **Operations Leads** need a dependable, repeatable view of delivery performance so they can direct operational attention to the right part of the fulfillment journey.
 
-## Project KPI
+The pipeline ingests operational data from CSV, SQLite, and a paginated REST API; validates key order chronology rules; models fulfillment-stage durations; and emits run-date-partitioned KPI, data-quality, and visualization artifacts.
 
-The primary KPI is **Percentage of orders delivered past the estimated delivery date**:
+## Project KPI and decision support
+
+The primary KPI is the **percentage of delivered orders that arrived after the estimated delivery date**:
 
 ```text
-late orders / analyzed orders * 100
+late-delivery percentage = late delivered orders / comparable delivered orders * 100
 ```
 
-An order is late when `order_delivered_customer_date` is later than `order_estimated_delivery_date`. For late orders, the pipeline also reports average elapsed days for:
+An order is late if `order_delivered_customer_date` is later than `order_estimated_delivery_date`. For late orders, the pipeline also reports average elapsed time in each stage:
 
-| Fulfillment stage | Timestamp interval |
+| Fulfillment stage | Start → end timestamps |
 | --- | --- |
-| Approval | Purchase to approval |
-| Dispatch | Approval to carrier handoff |
-| Transit | Carrier handoff to customer delivery |
+| Approval | Purchase → approval |
+| Dispatch | Approval → carrier handoff |
+| Transit | Carrier handoff → customer delivery |
 
-## Source overview
+These measures support the operational decision to **intervene with specific slow sellers** when delays build before carrier handoff, versus **investigating or renegotiating carrier contracts** when post-handoff transit is the dominant bottleneck. Current sources do not identify individual carriers, so transit metrics are a signal for carrier follow-up—not proof of carrier-level attribution.
 
-`DataExtractor` combines three source types:
+## Data sources
 
-| Source | Current inputs | Role |
-| --- | --- | --- |
-| CSV | `data/raw/orders.csv`, `data/raw/reviews.csv` | Core order and review records |
-| SQLite | `data/raw/ecommerce.db` | Items, customers, sellers, products, and category translation |
-| REST API | `/payments`, `/geolocation` at `OLIST_API_URL` | Payment and location records with pagination and retry handling |
+| Retrieval mode | Inputs and entities |
+| --- | --- |
+| **CSV** | `orders.csv` supplies order status and lifecycle timestamps; `reviews.csv` supplies customer review records. Paths are set under `sources.csv` in `config.yaml`. |
+| **SQLite** | `ecommerce.db` supplies order items, customers, sellers, products, and product-category translation through configurable SQL queries. |
+| **Paginated REST API** | `/payments` supplies payment records and `/geolocation` supplies postal-prefix coordinates and region metadata. Base URL, endpoint paths, page size, query parameter names, response keys, timeout, retry count, and retry backoff are configurable. |
 
-The default API endpoint is `http://localhost:8000`. When the API source is not hosted elsewhere, start the included local fixture in a separate terminal with `uvicorn data.api.main:app --reload --port 8000`.
-
-## Setup and usage
+The repository includes a local API fixture at `data/api/main.py`. Start it in a separate terminal when no compatible API service is available:
 
 ```bash
-git clone <repository-url>
-cd olist-fde-pipeline
-python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+uvicorn data.api.main:app --host 127.0.0.1 --port 8000
 ```
 
-Run a partitioned pipeline job (this automatically starts the Streamlit dashboard at `http://localhost:8501`, preselected to the new run):
+The fixture's data is local test/demo data; configure `api.url` or `OLIST_API_URL` to use a different API implementation.
+
+## Configuration
+
+Create a local YAML configuration from the complete template:
 
 ```bash
-python -m src.pipeline --run-date "$(date +%F)"
+cp config.yaml.example config.yaml
 ```
 
-To launch or reopen the evidence dashboard independently:
+`config.yaml` is loaded from the repository root by default and is excluded from Git so machine-specific paths and settings are not committed. Paths in YAML are relative to the repository root unless absolute. To load configuration from another location, set `OLIST_CONFIG_FILE`.
+
+Optional environment overrides can be created from the supplementary template:
 
 ```bash
-streamlit run src/dashboard.py
+cp .env.example .env
 ```
 
-Optional environment variables include `OLIST_DATA_DIR`, `OLIST_OUTPUT_DIR`, `OLIST_API_URL`, `OLIST_API_TIMEOUT`, `OLIST_API_MAX_RETRIES`, and `OLIST_API_RETRY_BACKOFF`.
+The run scripts automatically source `.env` when it exists. Uncomment and adjust only the overrides required; environment values take precedence over YAML. No API credentials are needed for the included local fixture. The configuration precedence is:
 
-Generated artifacts are written to `output/YYYY-MM-DD/`:
+```text
+built-in defaults < config.yaml < exported OLIST_* variables < explicit Python constructor arguments
+```
+
+The YAML template exposes API behavior, input and output paths, CSV and SQLite source definitions, SQL, model timestamp fields, generated artifact names, visualization styling, and dashboard title/theme/port/layout.
+
+## Setup and run
+
+Requirements are installed into the root `.venv` automatically by either run script. To prepare the environment manually:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+cp config.yaml.example config.yaml
+```
+
+Run a pipeline for a specific date, or omit the date to use the machine's current date:
+
+```bash
+./run_pipeline.sh 2026-09-27
+./run_pipeline.sh
+```
+
+`run_pipeline.sh` installs dependencies, applies `.env` overrides, and executes `python -m src.pipeline --run-date <DATE>`. When the pipeline successfully writes its artifacts, it hands its process over to Streamlit, sets the selected run date, and serves the dashboard on the configured port (default `http://localhost:8501`). Use `Ctrl+C` in that terminal to stop the dashboard server.
+
+Run the full automated test suite with:
+
+```bash
+./run_tests.sh
+```
+
+## Output artifacts
+
+Each successful run writes to `<paths.output_dir>/<YYYY-MM-DD>/`:
 
 ```text
 logs/pipeline.log
 data/kpi_dashboard.csv
 data/clean_event_model.csv
-data/flagged_anomalies.csv  (only when exceptions exist)
+data/flagged_anomalies.csv       # written when anomalies exist
 visualizations/*.png
 ```
 
+Directory and artifact names are configurable. The Streamlit dashboard reads the configured output directory and displays KPI metrics, charts, the clean event model, and any flagged exceptions.
+
 ## Architecture
 
-### Source map
+### Source map and pipeline workflow
 
 ```mermaid
 flowchart LR
-    CSV["CSV files<br/>orders.csv, reviews.csv"]
-    SQLite["SQLite database<br/>ecommerce.db"]
-    API["REST API<br/>/payments, /geolocation"]
-    subgraph Pipeline["Modular Python pipeline"]
-        Extract["extract.py<br/>DataExtractor"] --> Validate["validate.py<br/>DataValidator"] --> Model["model.py<br/>DataModeler"] --> Visualize["visualize.py<br/>DataVisualizer"]
-        Orchestrate["pipeline.py<br/>PipelineOrchestrator"] -. coordinates .-> Extract
-        Orchestrate -. coordinates .-> Validate
-        Orchestrate -. coordinates .-> Model
-        Orchestrate -. coordinates .-> Visualize
+    OrdersCSV["Orders CSV"]
+    ReviewsCSV["Reviews CSV"]
+    ItemsDB["Items SQLite DB"]
+    ReferenceDB["SQLite reference tables<br/>Customers, sellers, products, category translation"]
+    RestAPI["Paginated REST API<br/>Payments and geolocation"]
+
+    subgraph Pipeline["Configurable Python modular pipeline"]
+        Extract["Extract<br/>CSV · SQLite · REST API"]
+        Validate["Validate<br/>chronology and exceptions"]
+        Model["Model<br/>event durations and KPIs"]
+        Visualize["Visualize<br/>PNG charts"]
+        Extract --> Validate --> Model --> Visualize
     end
-    CSV --> Extract
-    SQLite --> Extract
-    API --> Extract
-    Visualize --> Output["output/YYYY-MM-DD/"]
-    Model --> Data["data/<br/>KPI, event model, anomalies"]
-    Visualize --> Charts["visualizations/<br/>PNG charts"]
-    Orchestrate --> Logs["logs/<br/>pipeline.log"]
-    Output --- Data
-    Output --- Charts
-    Output --- Logs
+
+    OrdersCSV --> Extract
+    ReviewsCSV --> Extract
+    ItemsDB --> Extract
+    ReferenceDB --> Extract
+    RestAPI --> Extract
+
+    Model --> DataOut["output/YYYY-MM-DD/data<br/>KPIs · clean event model · anomalies"]
+    Visualize --> VizOut["output/YYYY-MM-DD/visualizations<br/>PNG charts"]
+    Validate --> LogsOut["output/YYYY-MM-DD/logs<br/>pipeline.log"]
 ```
 
-The editable source for this diagram is [`docs/source-map.mmd`](docs/source-map.mmd).
+Editable Mermaid source: [`docs/source-map.mmd`](docs/source-map.mmd).
 
-### Data model
+### Workflow and entity relationships
 
 ```mermaid
 erDiagram
-    ORDERS ||--|{ ITEMS : contains
-    ORDERS ||--|{ PAYMENTS : has
-    ORDERS }o--|| CUSTOMERS : placed_by
-    CUSTOMERS }o--|| GEOLOCATION : located_at
-    SELLERS ||--|{ ITEMS : fulfills
+    ORDERS ||--|{ ORDER_ITEMS : contains
+    ORDERS ||--o{ PAYMENTS : paid_by
+    CUSTOMERS ||--o{ ORDERS : places
+    CUSTOMERS }o--o{ GEOLOCATION : zip_prefix_lookup
+
     ORDERS {
         string order_id PK
         string customer_id FK
+        string order_status
         datetime order_purchase_timestamp
+        datetime order_approved_at
+        datetime order_delivered_carrier_date
         datetime order_delivered_customer_date
         datetime order_estimated_delivery_date
     }
-    ITEMS {
+    ORDER_ITEMS {
         string order_id FK
+        int order_item_id
         string product_id
-        string seller_id FK
+        string seller_id
+        datetime shipping_limit_date
         decimal price
+        decimal freight_value
     }
     PAYMENTS {
         string order_id FK
+        int payment_sequential
         string payment_type
+        int payment_installments
         decimal payment_value
     }
     CUSTOMERS {
         string customer_id PK
-        string customer_zip_code_prefix FK
+        string customer_zip_code_prefix
+        string customer_state
     }
     GEOLOCATION {
-        string geolocation_zip_code_prefix PK
+        string geolocation_zip_code_prefix
         decimal geolocation_lat
         decimal geolocation_lng
-    }
-    SELLERS {
-        string seller_id PK
+        string geolocation_city
+        string geolocation_state
     }
 ```
 
-The editable source for this diagram is [`docs/data-model.mmd`](docs/data-model.mmd).
+`GEOLOCATION` is associated to customer delivery regions through postal-code-prefix matching; it is a location lookup, not a direct foreign-key relationship stored on `ORDERS`.
+Editable Mermaid source: [`docs/data-model.mmd`](docs/data-model.mmd).
 
-## EDA notebook
+## Known / Unknown / Assumption / Limitation (KUAL)
 
-`eda.ipynb` contains reproducible checks for missing values in orders and payments, plus an inner join of orders and items followed by an item-price distribution analysis:
-
-```bash
-jupyter notebook eda.ipynb
-```
-
-## Data quality and scope matrix
-
-| Classification | Statement |
+| Category | Statement |
 | --- | --- |
-| **Known** | The source provides purchase, approval, carrier-handoff, customer-delivery, and estimated-delivery timestamps. The validator explicitly checks chronological contradictions and missing delivery dates for delivered orders. |
-| **Assumption** | Source timestamps are interpreted in one consistent timezone/clock standard. The pipeline currently parses them as timezone-naive datetimes and does not apply a geographic timezone conversion. |
-| **Unknown** | External carrier conditions such as weather, traffic, labor disruption, vehicle capacity, and route-level exceptions are not present in the supplied data and cannot be attributed by this pipeline. |
-| **Limitation** | This is a batch pipeline over CSV, SQLite, and paginated REST inputs. It does not provide real-time streaming, event-time watermarks, continuous incremental processing, or automated alerting. |
-
-## Testing
-
-```bash
-pytest -q
-```
+| **Known** | The source provides purchase, approval, dispatch (carrier handoff), and customer-delivery timestamps, along with an estimated delivery date. The validator flags a delivered order whose delivery date is missing as an anomaly. |
+| **Unknown** | Weather events, carrier-specific route breakdowns, and manual data-entry errors at the warehouse are not represented well enough in the supplied data to identify or attribute their effect. |
+| **Assumption** | All timestamps are assumed to be expressed in the same timezone (BRT). Missing delivery dates for records with `delivered` status are treated as data-quality anomalies, not as pending deliveries. The pipeline currently does not convert timestamps between timezones. |
+| **Limitation** | The pipeline operates in batch mode, not real-time streaming. API extraction decodes each paginated JSON response into memory and accumulates the retrieved records in memory for DataFrame construction; memory use therefore grows with the source volume. |

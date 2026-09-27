@@ -1,25 +1,25 @@
 erDiagram
-    ORDERS ||--|{ ITEMS : contains
-    ORDERS ||--|{ PAYMENTS : has
-    ORDERS }o--|| CUSTOMERS : placed_by
-    CUSTOMERS }o--|| GEOLOCATION : located_at
-    SELLERS ||--|{ ITEMS : fulfills
+    ORDERS ||--|{ ORDER_ITEMS : contains
+    ORDERS ||--o{ PAYMENTS : paid_by
+    CUSTOMERS ||--o{ ORDERS : places
+    CUSTOMERS }o--o{ GEOLOCATION : zip_prefix_lookup
 
     ORDERS {
         string order_id PK
         string customer_id FK
+        string order_status
         datetime order_purchase_timestamp
         datetime order_approved_at
         datetime order_delivered_carrier_date
         datetime order_delivered_customer_date
         datetime order_estimated_delivery_date
-        string order_status
     }
-    ITEMS {
+    ORDER_ITEMS {
         string order_id FK
         int order_item_id
         string product_id
-        string seller_id FK
+        string seller_id
+        datetime shipping_limit_date
         decimal price
         decimal freight_value
     }
@@ -27,21 +27,18 @@ erDiagram
         string order_id FK
         int payment_sequential
         string payment_type
+        int payment_installments
         decimal payment_value
     }
     CUSTOMERS {
         string customer_id PK
-        string customer_unique_id
-        string customer_zip_code_prefix FK
+        string customer_zip_code_prefix
+        string customer_state
     }
     GEOLOCATION {
-        string geolocation_zip_code_prefix PK
+        string geolocation_zip_code_prefix
         decimal geolocation_lat
         decimal geolocation_lng
         string geolocation_city
         string geolocation_state
-    }
-    SELLERS {
-        string seller_id PK
-        string seller_zip_code_prefix
     }

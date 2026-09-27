@@ -1,28 +1,24 @@
 flowchart LR
-    CSV["CSV files<br/>orders.csv, reviews.csv"]
-    SQLite["SQLite database<br/>ecommerce.db"]
-    API["REST API<br/>/payments, /geolocation"]
+    OrdersCSV["Orders CSV"]
+    ReviewsCSV["Reviews CSV"]
+    ItemsDB["Items SQLite DB"]
+    ReferenceDB["SQLite reference tables<br/>Customers, sellers, products, category translation"]
+    RestAPI["Paginated REST API<br/>Payments and geolocation"]
 
-    subgraph Pipeline["Modular Python pipeline"]
-        Extract["extract.py<br/>DataExtractor"]
-        Validate["validate.py<br/>DataValidator"]
-        Model["model.py<br/>DataModeler"]
-        Visualize["visualize.py<br/>DataVisualizer"]
-        Orchestrate["pipeline.py<br/>PipelineOrchestrator"]
+    subgraph Pipeline["Configurable Python modular pipeline"]
+        Extract["Extract<br/>CSV · SQLite · REST API"]
+        Validate["Validate<br/>chronology and exceptions"]
+        Model["Model<br/>event durations and KPIs"]
+        Visualize["Visualize<br/>PNG charts"]
         Extract --> Validate --> Model --> Visualize
-        Orchestrate -. coordinates .-> Extract
-        Orchestrate -. coordinates .-> Validate
-        Orchestrate -. coordinates .-> Model
-        Orchestrate -. coordinates .-> Visualize
     end
 
-    CSV --> Extract
-    SQLite --> Extract
-    API --> Extract
-    Visualize --> Output["output/YYYY-MM-DD/"]
-    Model --> Data["data/<br/>KPI, event model, anomalies"]
-    Visualize --> Charts["visualizations/<br/>PNG charts"]
-    Orchestrate --> Logs["logs/<br/>pipeline.log"]
-    Output --- Data
-    Output --- Charts
-    Output --- Logs
+    OrdersCSV --> Extract
+    ReviewsCSV --> Extract
+    ItemsDB --> Extract
+    ReferenceDB --> Extract
+    RestAPI --> Extract
+
+    Model --> DataOut["output/YYYY-MM-DD/data<br/>KPIs · clean event model · anomalies"]
+    Visualize --> VizOut["output/YYYY-MM-DD/visualizations<br/>PNG charts"]
+    Validate --> LogsOut["output/YYYY-MM-DD/logs<br/>pipeline.log"]

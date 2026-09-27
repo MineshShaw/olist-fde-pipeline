@@ -8,7 +8,7 @@ class PipelineLogger:
     def __init__(self, config: PipelineConfig, run_date: str):
         self.config = config
         self.run_date = run_date
-        self.log_dir = self.config.base_output_dir / run_date / "logs"
+        self.log_dir = self.config.base_output_dir / run_date / self.config.output_logs_dir
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
         logger_name = f"olist_pipeline.{run_date}"

@@ -7,5 +7,4 @@ fastapi
 uvicorn
 jupyter
 pytest
-uvicorn
-fastapi
+PyYAML

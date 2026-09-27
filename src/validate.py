@@ -1,5 +1,6 @@
 import pandas as pd
 from typing import Dict, Optional, Tuple
+from src.config import PipelineConfig
 from src.logger import PipelineLogger, default_logger
 
 class DataValidator:
@@ -7,8 +8,13 @@ class DataValidator:
     Class 6 Validation Layer: Enforces business rules and schema expectations.
     Anomalies are flagged and segregated rather than silently discarded.
     """
-    def __init__(self, logger: Optional[PipelineLogger] = None):
+    def __init__(
+        self,
+        logger: Optional[PipelineLogger] = None,
+        config: Optional[PipelineConfig] = None,
+    ):
         # In a real environment, rule thresholds could be configured here.
+        self.config = config or PipelineConfig()
         self.logger = logger or default_logger()
         self.logger.info("Initialized data validator.")
 
@@ -22,7 +28,11 @@ class DataValidator:
         df = df.copy()
         
         # 1. Cast datetimes securely
-        date_cols = ['order_purchase_timestamp', 'order_delivered_customer_date', 'order_estimated_delivery_date']
+        date_cols = [
+            self.config.timestamp_columns["purchase"],
+            self.config.timestamp_columns["delivery"],
+            self.config.timestamp_columns["estimate"],
+        ]
         self.logger.info("Starting loop over order date columns.")
         for col in date_cols:
             if col in df.columns:
@@ -38,9 +48,11 @@ class DataValidator:
         df['anomaly_reason'] = ""
         
         # Rule A: Chronological Mismatch (Time travel / Negative transit time)
-        if 'order_delivered_customer_date' in df.columns and 'order_purchase_timestamp' in df.columns:
+        delivery_col = self.config.timestamp_columns["delivery"]
+        purchase_col = self.config.timestamp_columns["purchase"]
+        if delivery_col in df.columns and purchase_col in df.columns:
             self.logger.info("Calculating chronological mismatch mask.")
-            time_travel_mask = df['order_delivered_customer_date'] < df['order_purchase_timestamp']
+            time_travel_mask = df[delivery_col] < df[purchase_col]
             self.logger.info("Marking chronological mismatches invalid.")
             df.loc[time_travel_mask, 'is_valid'] = False
             self.logger.info("Recording chronological mismatch reasons.")
@@ -49,9 +61,12 @@ class DataValidator:
             self.logger.info("Skipping chronological mismatch rule because required columns are missing.")
         
         # Rule B: Missing Status Transitions
-        if 'order_status' in df.columns and 'order_delivered_customer_date' in df.columns:
+        if 'order_status' in df.columns and delivery_col in df.columns:
             self.logger.info("Calculating missing status transition mask.")
-            missing_transition_mask = (df['order_status'] == 'delivered') & (df['order_delivered_customer_date'].isna())
+            missing_transition_mask = (
+                (df['order_status'] == self.config.delivered_status)
+                & df[delivery_col].isna()
+            )
             self.logger.info("Marking missing status transitions invalid.")
             df.loc[missing_transition_mask, 'is_valid'] = False
             self.logger.info("Recording missing status transition reasons.")

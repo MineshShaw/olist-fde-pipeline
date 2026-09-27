@@ -44,6 +44,14 @@ def test_pipeline_orchestrator_success(MockExit, MockStreamlitMain, MockExtracto
     mock_visualizer_instance.generate_insights.assert_called_once()
     MockStreamlitMain.assert_called_once_with()
     MockExit.assert_called_once_with(0)
-    assert sys.argv == ["streamlit", "run", "src/dashboard.py"]
+    assert sys.argv == [
+        "streamlit",
+        "run",
+        "src/dashboard.py",
+        "--server.port",
+        "8501",
+        "--theme.base",
+        "light",
+    ]
     assert os.environ["DEFAULT_RUN_DATE"] == "2026-09-24"
     assert os.environ["STREAMLIT_BROWSER_GATHER_USAGE_STATS"] == "false"

@@ -19,18 +19,16 @@ class PipelineOrchestrator:
         base_output_dir: Optional[str] = None,
     ):
         self.run_date = run_date
-        self.config = config or PipelineConfig(
-            base_output_dir=Path(base_output_dir) if base_output_dir is not None else PipelineConfig().base_output_dir
-        )
+        self.config = config or PipelineConfig(base_output_dir=base_output_dir)
         self.logger = PipelineLogger(self.config, run_date)
         self.logger.info(f"Initializing pipeline orchestrator for run date {run_date}.")
         
         # 1. Define Subdirectories
         self.logger.info("Defining pipeline output subdirectories.")
         self.run_dir = self.config.base_output_dir / self.run_date
-        self.logs_dir = self.run_dir / "logs"
-        self.data_dir = self.run_dir / "data"
-        self.viz_dir = self.run_dir / "visualizations"
+        self.logs_dir = self.run_dir / self.config.output_logs_dir
+        self.data_dir = self.run_dir / self.config.output_data_dir
+        self.viz_dir = self.run_dir / self.config.output_visualizations_dir
         
         # 2. Create them safely
         self.logger.info("Starting loop to create pipeline output directories.")
@@ -54,7 +52,7 @@ class PipelineOrchestrator:
             
             # Validate
             self.logger.info("Initializing validation stage.")
-            validator = DataValidator(self.logger)
+            validator = DataValidator(self.logger, config=self.config)
             self.logger.info("Running validation stage.")
             validated_data = validator.run_all(raw_data)
             
@@ -77,34 +75,49 @@ class PipelineOrchestrator:
             
             # Model & Visualize
             self.logger.info("Initializing modeling stage.")
-            modeler = DataModeler(self.logger)
+            modeler = DataModeler(self.logger, config=self.config)
             self.logger.info("Creating event model.")
             event_model = modeler.process_event_model(clean_orders)
             self.logger.info("Creating KPI dashboard.")
             kpi_dashboard = modeler.generate_kpi_dashboard(event_model)
             
             self.logger.info("Initializing visualization stage.")
-            visualizer = DataVisualizer(viz_dir=self.viz_dir, logger=self.logger)
+            visualizer = DataVisualizer(
+                viz_dir=self.viz_dir, logger=self.logger, config=self.config
+            )
             self.logger.info("Generating visualization insights.")
             visualizer.generate_insights(event_model)
             
             # Save Outputs to /data
             self.logger.info("Saving KPI dashboard artifact.")
-            kpi_dashboard.to_csv(self.data_dir / "kpi_dashboard.csv", index=False)
+            kpi_dashboard.to_csv(self.data_dir / self.config.artifacts["kpi_file"], index=False)
             self.logger.info("Saving clean event model artifact.")
-            event_model.to_csv(self.data_dir / "clean_event_model.csv", index=False)
+            event_model.to_csv(
+                self.data_dir / self.config.artifacts["event_model_file"], index=False
+            )
             if not anomaly_orders.empty:
                 self.logger.info("Saving flagged anomaly artifact.")
-                anomaly_orders.to_csv(self.data_dir / "flagged_anomalies.csv", index=False)
+                anomaly_orders.to_csv(
+                    self.data_dir / self.config.artifacts["anomalies_file"], index=False
+                )
             else:
                 self.logger.info("Skipping flagged anomaly artifact because no anomalies exist.")
             
             self.logger.info(f"Pipeline succeeded. Artifacts routed to {self.run_dir}.")
 
             os.environ["STREAMLIT_BROWSER_GATHER_USAGE_STATS"] = "false"
-            os.environ["DEFAULT_RUN_DATE"] = self.run_date
+            os.environ[self.config.default_run_date_env] = self.run_date
             self.logger.info("Handing over process to Streamlit dashboard...")
-            sys.argv = ["streamlit", "run", "src/dashboard.py"]
+            os.environ["STREAMLIT_THEME_BASE"] = self.config.ui_default_theme
+            sys.argv = [
+                "streamlit",
+                "run",
+                self.config.dashboard_script,
+                "--server.port",
+                str(self.config.ui_port),
+                "--theme.base",
+                self.config.ui_default_theme,
+            ]
             sys.exit(stcli.main())
             
         except Exception as e:

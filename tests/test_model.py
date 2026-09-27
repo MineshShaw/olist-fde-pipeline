@@ -43,3 +43,24 @@ def test_generate_kpi_dashboard(modeler, mock_clean_orders):
     # The late order (O2) took 6 days in transit
     avg_transit = dashboard[dashboard["Metric"] == "Avg Carrier Transit Time (Late Orders) [Days]"]["Value"].iloc[0]
     assert avg_transit == 6.0
+
+
+def test_generate_kpi_dashboard_excludes_orders_without_delivery_dates(modeler, mock_clean_orders):
+    incomplete_order = mock_clean_orders.iloc[[0]].copy()
+    incomplete_order["order_id"] = "O3"
+    incomplete_order["order_delivered_customer_date"] = None
+    incomplete_order["order_estimated_delivery_date"] = None
+    event_model = modeler.process_event_model(
+        pd.concat([mock_clean_orders, incomplete_order], ignore_index=True)
+    )
+
+    dashboard = modeler.generate_kpi_dashboard(event_model)
+    total_orders = dashboard.loc[
+        dashboard["Metric"] == "Total Orders Analyzed", "Value"
+    ].iloc[0]
+    percentage_late = dashboard.loc[
+        dashboard["Metric"] == "Percentage Late (%)", "Value"
+    ].iloc[0]
+
+    assert total_orders == 2
+    assert percentage_late == 50.0

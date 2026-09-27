@@ -15,6 +15,13 @@ fi
 # shellcheck source=/dev/null
 source "${VENV_DIR}/bin/activate"
 
+if [[ -f "${PROJECT_ROOT}/.env" ]]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "${PROJECT_ROOT}/.env"
+    set +a
+fi
+
 python -m pip install --upgrade pip
 if [[ -f "$REQUIREMENTS_FILE" ]]; then
     python -m pip install -r "$REQUIREMENTS_FILE"

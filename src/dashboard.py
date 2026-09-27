@@ -5,12 +5,16 @@ from pathlib import Path
 from typing import Dict, Optional
 
 import pandas as pd
+from src.config import PipelineConfig
+
+CONFIG = PipelineConfig()
+os.environ.setdefault("STREAMLIT_THEME_BASE", CONFIG.ui_default_theme)
+
 import streamlit as st
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-OUTPUT_ROOT = Path(os.getenv("OLIST_OUTPUT_DIR", PROJECT_ROOT / "output"))
-DEFAULT_RUN_DATE = os.getenv("DEFAULT_RUN_DATE")
+OUTPUT_ROOT = CONFIG.base_output_dir
+DEFAULT_RUN_DATE = os.getenv(CONFIG.default_run_date_env)
 
 KPI_LABELS = {
     "Total Orders Analyzed": "Total Orders",
@@ -23,8 +27,8 @@ STAGE_METRICS = {
     "Carrier Transit": "Avg Carrier Transit Time (Late Orders) [Days]",
 }
 CHARTS = (
-    ("late_order_bottlenecks.png", "Average Stage Duration for Late Orders"),
-    ("transit_times_distribution.png", "Carrier Transit Time Distribution"),
+    (CONFIG.artifacts["bottleneck_chart_file"], "Average Stage Duration for Late Orders"),
+    (CONFIG.artifacts["transit_chart_file"], "Carrier Transit Time Distribution"),
 )
 
 
@@ -38,7 +42,11 @@ def available_runs(output_root: Optional[Path] = None) -> list[str]:
             directory.name
             for directory in root.iterdir()
             if directory.is_dir()
-            and (directory / "data" / "kpi_dashboard.csv").is_file()
+            and (
+                directory
+                / CONFIG.output_data_dir
+                / CONFIG.artifacts["kpi_file"]
+            ).is_file()
         ),
         reverse=True,
     )
@@ -72,7 +80,7 @@ def _metric_value(metrics: Dict[str, float], key: str) -> float:
 
 
 def _display_chart(run_dir: Path, filename: str, caption: str) -> None:
-    image_path = run_dir / "visualizations" / filename
+    image_path = run_dir / CONFIG.output_visualizations_dir / filename
     if image_path.is_file():
         st.image(str(image_path), caption=caption, use_container_width=True)
     else:
@@ -81,12 +89,12 @@ def _display_chart(run_dir: Path, filename: str, caption: str) -> None:
 
 def main() -> None:
     st.set_page_config(
-        page_title="Olist Delivery Reliability",
-        page_icon="📦",
-        layout="wide",
+        page_title=CONFIG.ui_page_title,
+        page_icon=CONFIG.ui_page_icon,
+        layout=CONFIG.ui_layout,
     )
 
-    st.title("Olist Delivery Reliability")
+    st.title(CONFIG.ui_page_title)
     st.markdown(
         """
         **Operational view of the customer delivery promise.** Track late deliveries,
@@ -104,25 +112,25 @@ def main() -> None:
         st.stop()
 
     st.sidebar.markdown(
-        """
+        f"""
         <style>
         /* 1. Limit the height and add a scrollbar to the list of choices */
-        section[data-testid="stSidebar"] [role="radiogroup"] {
-            max-height: 320px;
+        section[data-testid="stSidebar"] [role="radiogroup"] {{
+            max-height: {CONFIG.sidebar_date_list_height_px}px;
             overflow-y: auto;
             padding-right: 0.4rem;
-        }
+        }}
         
         /* 2. Change the font size of the radio button label ("Available run dates") */
-        section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p {
+        section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p {{
             font-size: 1.5rem !important;
             font-weight: bold !important;
-        }
+        }}
 
         /* 3. Change the font size of the radio options (the run dates list) */
-        section[data-testid="stSidebar"] [data-testid="stRadio"] label p {
+        section[data-testid="stSidebar"] [data-testid="stRadio"] label p {{
             font-size: 1rem !important;
-        }
+        }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -135,10 +143,10 @@ def main() -> None:
         index=default_index,
     )
     run_dir = OUTPUT_ROOT / selected_run
-    data_dir = run_dir / "data"
+    data_dir = run_dir / CONFIG.output_data_dir
 
     try:
-        kpis = _load_csv(load_kpis, data_dir / "kpi_dashboard.csv")
+        kpis = _load_csv(load_kpis, data_dir / CONFIG.artifacts["kpi_file"])
         required_columns = {"Metric", "Value"}
         missing_columns = required_columns.difference(kpis.columns)
         if missing_columns:
@@ -195,7 +203,7 @@ def main() -> None:
 
     with data_tab:
         st.subheader("Clean order event model")
-        clean_path = data_dir / "clean_event_model.csv"
+        clean_path = data_dir / CONFIG.artifacts["event_model_file"]
         try:
             clean_data = _load_csv(load_clean_data, clean_path)
         except (OSError, pd.errors.ParserError) as error:
@@ -225,7 +233,7 @@ def main() -> None:
 
     with quality_tab:
         st.subheader("Data Quality Exceptions")
-        anomaly_path = data_dir / "flagged_anomalies.csv"
+        anomaly_path = data_dir / CONFIG.artifacts["anomalies_file"]
         if not anomaly_path.is_file():
             st.info("No data quality exceptions were flagged in this run.")
         else:
