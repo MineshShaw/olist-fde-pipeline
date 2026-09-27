@@ -1,0 +1,28 @@
+flowchart LR
+    CSV["CSV files<br/>orders.csv, reviews.csv"]
+    SQLite["SQLite database<br/>ecommerce.db"]
+    API["REST API<br/>/payments, /geolocation"]
+
+    subgraph Pipeline["Modular Python pipeline"]
+        Extract["extract.py<br/>DataExtractor"]
+        Validate["validate.py<br/>DataValidator"]
+        Model["model.py<br/>DataModeler"]
+        Visualize["visualize.py<br/>DataVisualizer"]
+        Orchestrate["pipeline.py<br/>PipelineOrchestrator"]
+        Extract --> Validate --> Model --> Visualize
+        Orchestrate -. coordinates .-> Extract
+        Orchestrate -. coordinates .-> Validate
+        Orchestrate -. coordinates .-> Model
+        Orchestrate -. coordinates .-> Visualize
+    end
+
+    CSV --> Extract
+    SQLite --> Extract
+    API --> Extract
+    Visualize --> Output["output/YYYY-MM-DD/"]
+    Model --> Data["data/<br/>KPI, event model, anomalies"]
+    Visualize --> Charts["visualizations/<br/>PNG charts"]
+    Orchestrate --> Logs["logs/<br/>pipeline.log"]
+    Output --- Data
+    Output --- Charts
+    Output --- Logs

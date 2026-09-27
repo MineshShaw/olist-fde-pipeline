@@ -1,0 +1,11 @@
+pandas
+matplotlib
+seaborn
+requests
+streamlit
+fastapi
+uvicorn
+jupyter
+pytest
+uvicorn
+fastapi

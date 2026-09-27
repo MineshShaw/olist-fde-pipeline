@@ -1,4 +1,5 @@
 import pytest
+import os
 from unittest.mock import patch, MagicMock
 from src.pipeline import PipelineOrchestrator
 
@@ -6,7 +7,9 @@ from src.pipeline import PipelineOrchestrator
 @patch("src.pipeline.DataModeler")
 @patch("src.pipeline.DataValidator")
 @patch("src.pipeline.DataExtractor")
-def test_pipeline_orchestrator_success(MockExtractor, MockValidator, MockModeler, MockVisualizer, tmp_path):
+@patch("src.pipeline.subprocess.Popen")
+def test_pipeline_orchestrator_success(MockPopen, MockExtractor, MockValidator, MockModeler, MockVisualizer, tmp_path, monkeypatch):
+    monkeypatch.setenv("DEFAULT_RUN_DATE", "previous-run")
     # Setup Data Mocks
     mock_extractor_instance = MockExtractor.return_value
     mock_extractor_instance.run_all.return_value = {"mock": "data"}
@@ -35,3 +38,6 @@ def test_pipeline_orchestrator_success(MockExtractor, MockValidator, MockModeler
     
     mock_visualizer_instance = MockVisualizer.return_value
     mock_visualizer_instance.generate_insights.assert_called_once()
+    MockPopen.assert_called_once()
+    assert MockPopen.call_args.kwargs["env"]["DEFAULT_RUN_DATE"] == "2026-09-24"
+    assert os.environ["DEFAULT_RUN_DATE"] == "2026-09-24"

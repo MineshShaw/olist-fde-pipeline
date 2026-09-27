@@ -8,7 +8,7 @@ import time
 app = FastAPI(title="Olist FDE Paginated API")
 
 API_DIR = "./data/api"
-RATE_LIMIT_REQUESTS = int(os.getenv("OLIST_API_RATE_LIMIT", "5"))
+RATE_LIMIT_REQUESTS = int(os.getenv("OLIST_API_RATE_LIMIT", "50"))
 RATE_LIMIT_WINDOW_SECONDS = float(os.getenv("OLIST_API_RATE_WINDOW", "1"))
 _request_history = {}
 _rate_limit_lock = threading.Lock()

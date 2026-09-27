@@ -1,0 +1,47 @@
+erDiagram
+    ORDERS ||--|{ ITEMS : contains
+    ORDERS ||--|{ PAYMENTS : has
+    ORDERS }o--|| CUSTOMERS : placed_by
+    CUSTOMERS }o--|| GEOLOCATION : located_at
+    SELLERS ||--|{ ITEMS : fulfills
+
+    ORDERS {
+        string order_id PK
+        string customer_id FK
+        datetime order_purchase_timestamp
+        datetime order_approved_at
+        datetime order_delivered_carrier_date
+        datetime order_delivered_customer_date
+        datetime order_estimated_delivery_date
+        string order_status
+    }
+    ITEMS {
+        string order_id FK
+        int order_item_id
+        string product_id
+        string seller_id FK
+        decimal price
+        decimal freight_value
+    }
+    PAYMENTS {
+        string order_id FK
+        int payment_sequential
+        string payment_type
+        decimal payment_value
+    }
+    CUSTOMERS {
+        string customer_id PK
+        string customer_unique_id
+        string customer_zip_code_prefix FK
+    }
+    GEOLOCATION {
+        string geolocation_zip_code_prefix PK
+        decimal geolocation_lat
+        decimal geolocation_lng
+        string geolocation_city
+        string geolocation_state
+    }
+    SELLERS {
+        string seller_id PK
+        string seller_zip_code_prefix
+    }

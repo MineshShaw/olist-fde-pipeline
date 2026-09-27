@@ -1,4 +1,7 @@
 import argparse
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Optional
 from src.config import PipelineConfig
@@ -97,6 +100,25 @@ class PipelineOrchestrator:
                 self.logger.info("Skipping flagged anomaly artifact because no anomalies exist.")
             
             self.logger.info(f"Pipeline succeeded. Artifacts routed to {self.run_dir}.")
+
+            os.environ["DEFAULT_RUN_DATE"] = self.run_date
+            dashboard_path = Path(__file__).resolve().with_name("dashboard.py")
+            launch_environment = os.environ.copy()
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "streamlit",
+                    "run",
+                    str(dashboard_path),
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                env=launch_environment,
+            )
+            self.logger.info(
+                f"Dashboard server has been started and is serving the latest run "
+                f"({self.run_date}): http://localhost:8501"
+            )
             
         except Exception as e:
             self.logger.error(f"Pipeline failed: {e}")
