@@ -106,15 +106,28 @@ def main() -> None:
     st.sidebar.markdown(
         """
         <style>
+        /* 1. Limit the height and add a scrollbar to the list of choices */
         section[data-testid="stSidebar"] [role="radiogroup"] {
             max-height: 320px;
             overflow-y: auto;
             padding-right: 0.4rem;
         }
+        
+        /* 2. Change the font size of the radio button label ("Available run dates") */
+        section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p {
+            font-size: 1.5rem !important;
+            font-weight: bold !important;
+        }
+
+        /* 3. Change the font size of the radio options (the run dates list) */
+        section[data-testid="stSidebar"] [data-testid="stRadio"] label p {
+            font-size: 1rem !important;
+        }
         </style>
         """,
         unsafe_allow_html=True,
     )
+
     default_index = runs.index(DEFAULT_RUN_DATE) if DEFAULT_RUN_DATE in runs else 0
     selected_run = st.sidebar.radio(
         "Available run dates",
