@@ -1,9 +1,9 @@
 import argparse
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
+from streamlit.web import cli as stcli
 from src.config import PipelineConfig
 from src.extract import DataExtractor
 from src.logger import PipelineLogger
@@ -101,24 +101,11 @@ class PipelineOrchestrator:
             
             self.logger.info(f"Pipeline succeeded. Artifacts routed to {self.run_dir}.")
 
+            os.environ["STREAMLIT_BROWSER_GATHER_USAGE_STATS"] = "false"
             os.environ["DEFAULT_RUN_DATE"] = self.run_date
-            dashboard_path = Path(__file__).resolve().with_name("dashboard.py")
-            launch_environment = os.environ.copy()
-            subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "streamlit",
-                    "run",
-                    str(dashboard_path),
-                ],
-                cwd=Path(__file__).resolve().parents[1],
-                env=launch_environment,
-            )
-            self.logger.info(
-                f"Dashboard server has been started and is serving the latest run "
-                f"({self.run_date}): http://localhost:8501"
-            )
+            self.logger.info("Handing over process to Streamlit dashboard...")
+            sys.argv = ["streamlit", "run", "src/dashboard.py"]
+            sys.exit(stcli.main())
             
         except Exception as e:
             self.logger.error(f"Pipeline failed: {e}")

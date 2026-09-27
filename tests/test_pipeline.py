@@ -1,5 +1,6 @@
 import pytest
 import os
+import sys
 from unittest.mock import patch, MagicMock
 from src.pipeline import PipelineOrchestrator
 
@@ -7,9 +8,12 @@ from src.pipeline import PipelineOrchestrator
 @patch("src.pipeline.DataModeler")
 @patch("src.pipeline.DataValidator")
 @patch("src.pipeline.DataExtractor")
-@patch("src.pipeline.subprocess.Popen")
-def test_pipeline_orchestrator_success(MockPopen, MockExtractor, MockValidator, MockModeler, MockVisualizer, tmp_path, monkeypatch):
+@patch("src.pipeline.stcli.main", return_value=0)
+@patch("src.pipeline.sys.exit")
+def test_pipeline_orchestrator_success(MockExit, MockStreamlitMain, MockExtractor, MockValidator, MockModeler, MockVisualizer, tmp_path, monkeypatch):
     monkeypatch.setenv("DEFAULT_RUN_DATE", "previous-run")
+    original_argv = sys.argv.copy()
+    monkeypatch.setattr(sys, "argv", original_argv)
     # Setup Data Mocks
     mock_extractor_instance = MockExtractor.return_value
     mock_extractor_instance.run_all.return_value = {"mock": "data"}
@@ -38,6 +42,8 @@ def test_pipeline_orchestrator_success(MockPopen, MockExtractor, MockValidator, 
     
     mock_visualizer_instance = MockVisualizer.return_value
     mock_visualizer_instance.generate_insights.assert_called_once()
-    MockPopen.assert_called_once()
-    assert MockPopen.call_args.kwargs["env"]["DEFAULT_RUN_DATE"] == "2026-09-24"
+    MockStreamlitMain.assert_called_once_with()
+    MockExit.assert_called_once_with(0)
+    assert sys.argv == ["streamlit", "run", "src/dashboard.py"]
     assert os.environ["DEFAULT_RUN_DATE"] == "2026-09-24"
+    assert os.environ["STREAMLIT_BROWSER_GATHER_USAGE_STATS"] == "false"
