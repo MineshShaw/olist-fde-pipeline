@@ -37,6 +37,22 @@ class DataModeler:
         # Primary KPI Flag: Was it delivered past the estimated date?
         self.logger.info("Calculating late delivery flag.")
         df['is_late'] = df[timestamps["delivery"]] > df[timestamps["estimate"]]
+        if "order_status" in df.columns:
+            delivered = (
+                df["order_status"]
+                .astype("string")
+                .str.strip()
+                .str.casefold()
+                .eq(self.config.delivered_status.casefold())
+                .fillna(False)
+            )
+        else:
+            delivered = df[timestamps["delivery"]].notna()
+        df["is_comparable"] = (
+            delivered
+            & df[timestamps["delivery"]].notna()
+            & df[timestamps["estimate"]].notna()
+        )
         
         # Duration Math (in days)
         if timestamps["approval"] in df.columns and timestamps["purchase"] in df.columns:
@@ -93,16 +109,19 @@ class DataModeler:
             else pd.Series(True, index=event_model.index)
         )
         comparable_orders = (
-            delivered_orders
+            event_model["is_comparable"].fillna(False).astype(bool)
+            if "is_comparable" in event_model.columns
+            else delivered_orders
             & valid_orders
             & event_model[timestamps["delivery"]].notna()
             & event_model[timestamps["estimate"]].notna()
-        )
+        ) & valid_orders
         excluded_count = int(excluded_delivered_orders) + int(
             (delivered_orders & ~comparable_orders).sum()
         )
         self.logger.info("Calculating comparable delivered order count.")
         total_orders = int(comparable_orders.sum())
+        delivered_count = int(delivered_orders.sum()) + int(excluded_delivered_orders)
         self.logger.info("Calculating late order count.")
         late_mask = comparable_orders & event_model["is_late"].fillna(False)
         late_orders = int(late_mask.sum())
@@ -111,14 +130,21 @@ class DataModeler:
         
         self.logger.info("Filtering late orders for duration metrics.")
         late_df = event_model[late_mask]
-        
-        # Isolating where the delay happens for late orders
-        self.logger.info("Calculating average approval duration for late orders.")
-        avg_approval = late_df['approval_days'].mean() if 'approval_days' in late_df else 0
-        self.logger.info("Calculating average dispatch duration for late orders.")
-        avg_dispatch = late_df['dispatch_days'].mean() if 'dispatch_days' in late_df else 0
-        self.logger.info("Calculating average transit duration for late orders.")
-        avg_transit = late_df['transit_days'].mean() if 'transit_days' in late_df else 0
+        comparable_df = event_model[comparable_orders]
+
+        def average(frame: pd.DataFrame, column: str) -> float:
+            value = frame[column].mean() if column in frame else 0
+            return float(value) if pd.notna(value) else 0.0
+
+        self.logger.info("Calculating average order-approval duration.")
+        avg_approval = average(comparable_df, "approval_days")
+        avg_late_approval = average(late_df, "approval_days")
+        self.logger.info("Calculating average seller-dispatch duration.")
+        avg_dispatch = average(comparable_df, "dispatch_days")
+        avg_late_dispatch = average(late_df, "dispatch_days")
+        self.logger.info("Calculating average carrier-transit duration.")
+        avg_transit = average(comparable_df, "transit_days")
+        avg_late_transit = average(late_df, "transit_days")
         
         self.logger.info("Constructing KPI dashboard dataframe.")
         return pd.DataFrame({
@@ -127,7 +153,12 @@ class DataModeler:
                 "Total Late Deliveries",
                 "Percentage Late (%)",
                 "Delivered Orders Excluded from KPI",
-                "Avg Approval Time (Late Orders) [Days]",
+                "Delivered Orders Evaluated",
+                "Comparable Delivery Coverage (%)",
+                "Avg Order Approval Time (All Comparable Delivered) [Days]",
+                "Avg Seller Dispatch Time (All Comparable Delivered) [Days]",
+                "Avg Carrier Transit Time (All Comparable Delivered) [Days]",
+                "Avg Order Approval Time (Late Orders) [Days]",
                 "Avg Seller Dispatch Time (Late Orders) [Days]",
                 "Avg Carrier Transit Time (Late Orders) [Days]"
             ],
@@ -136,8 +167,13 @@ class DataModeler:
                 late_orders,
                 round(pct_late, 2),
                 excluded_count,
+                delivered_count,
+                round(total_orders / delivered_count * 100, 2) if delivered_count else 0,
                 round(avg_approval, 2),
                 round(avg_dispatch, 2),
-                round(avg_transit, 2)
+                round(avg_transit, 2),
+                round(avg_late_approval, 2),
+                round(avg_late_dispatch, 2),
+                round(avg_late_transit, 2)
             ]
         })

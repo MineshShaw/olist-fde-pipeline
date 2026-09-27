@@ -57,6 +57,7 @@ validation:
 artifacts:
   kpi_file: kpi_dashboard.csv
   event_model_file: clean_event_model.csv
+  seller_accountability_file: seller_accountability.csv
   anomalies_file: flagged_anomalies.csv
   transit_chart_file: transit_times_distribution.png
   bottleneck_chart_file: late_order_bottlenecks.png
@@ -80,3 +81,4 @@ ui:
   port: 8501
   default_run_date_env: DEFAULT_RUN_DATE
   sidebar_date_list_height_px: 320
+  seller_min_order_count: 30

@@ -1,14 +1,25 @@
 import logging
 from datetime import date
+from pathlib import Path
+from typing import Optional
 
 from src.config import PipelineConfig
 
 
 class PipelineLogger:
-    def __init__(self, config: PipelineConfig, run_date: str):
+    def __init__(
+        self,
+        config: PipelineConfig,
+        run_date: str,
+        log_dir: Optional[Path] = None,
+    ):
         self.config = config
         self.run_date = run_date
-        self.log_dir = self.config.base_output_dir / run_date / self.config.output_logs_dir
+        self.log_dir = (
+            Path(log_dir)
+            if log_dir is not None
+            else self.config.base_output_dir / run_date / self.config.output_logs_dir
+        )
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
         logger_name = f"olist_pipeline.{run_date}"

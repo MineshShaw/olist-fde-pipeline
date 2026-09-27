@@ -36,6 +36,7 @@ DEFAULTS: dict[str, Any] = {
     "artifacts": {
         "kpi_file": "kpi_dashboard.csv",
         "event_model_file": "clean_event_model.csv",
+        "seller_accountability_file": "seller_accountability.csv",
         "anomalies_file": "flagged_anomalies.csv",
         "transit_chart_file": "transit_times_distribution.png",
         "bottleneck_chart_file": "late_order_bottlenecks.png",
@@ -86,6 +87,7 @@ DEFAULTS: dict[str, Any] = {
         "port": 8501,
         "default_run_date_env": "DEFAULT_RUN_DATE",
         "sidebar_date_list_height_px": 320,
+        "seller_min_order_count": 30,
     },
 }
 
@@ -137,11 +139,16 @@ ENV_OVERRIDES: dict[str, tuple[str, type]] = {
     "OLIST_DASHBOARD_PORT": ("ui.port", int),
     "OLIST_DEFAULT_RUN_DATE_ENV": ("ui.default_run_date_env", str),
     "OLIST_SIDEBAR_DATE_LIST_HEIGHT_PX": ("ui.sidebar_date_list_height_px", int),
+    "OLIST_SELLER_MIN_ORDER_COUNT": ("ui.seller_min_order_count", int),
     "OLIST_KPI_FILE": ("artifacts.kpi_file", str),
     "OLIST_EVENT_MODEL_FILE": ("artifacts.event_model_file", str),
+    "OLIST_SELLER_ACCOUNTABILITY_FILE": ("artifacts.seller_accountability_file", str),
     "OLIST_ANOMALIES_FILE": ("artifacts.anomalies_file", str),
     "OLIST_TRANSIT_CHART_FILE": ("artifacts.transit_chart_file", str),
     "OLIST_BOTTLENECK_CHART_FILE": ("artifacts.bottleneck_chart_file", str),
+    "OLIST_API_RESPONSE_DATA_KEY": ("api.response_data_key", str),
+    "OLIST_API_RESPONSE_TOTAL_PAGES_KEY": ("api.response_total_pages_key", str),
+    "OLIST_API_RESPONSE_TOTAL_RECORDS_KEY": ("api.response_total_records_key", str),
 }
 
 
@@ -286,6 +293,7 @@ class PipelineConfig:
         self.ui_port = int(ui["port"])
         self.default_run_date_env = str(ui["default_run_date_env"])
         self.sidebar_date_list_height_px = int(ui["sidebar_date_list_height_px"])
+        self.seller_min_order_count = int(ui["seller_min_order_count"])
 
     def _path(self, value: Any) -> Path:
         path = Path(value).expanduser()
@@ -322,6 +330,8 @@ class PipelineConfig:
             raise ValueError("model.seconds_per_day must be greater than zero")
         if int(self.settings["ui"]["sidebar_date_list_height_px"]) < 1:
             raise ValueError("ui.sidebar_date_list_height_px must be greater than zero")
+        if int(self.settings["ui"]["seller_min_order_count"]) < 1:
+            raise ValueError("ui.seller_min_order_count must be greater than zero")
 
 
 def _copy_mapping(mapping: Mapping[str, Any]) -> dict[str, Any]:

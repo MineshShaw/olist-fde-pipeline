@@ -1,6 +1,7 @@
 """Executive Streamlit dashboard for Olist delivery operations."""
 
 import os
+import json
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -17,14 +18,9 @@ OUTPUT_ROOT = CONFIG.base_output_dir
 DEFAULT_RUN_DATE = os.getenv(CONFIG.default_run_date_env)
 
 KPI_LABELS = {
-    "Total Orders Analyzed": "Total Orders",
+    "Total Orders Analyzed": "Comparable Delivered Orders",
     "Total Late Deliveries": "Late Deliveries",
     "Percentage Late (%)": "Percentage Late",
-}
-STAGE_METRICS = {
-    "Approval": "Avg Approval Time (Late Orders) [Days]",
-    "Seller Dispatch": "Avg Seller Dispatch Time (Late Orders) [Days]",
-    "Carrier Transit": "Avg Carrier Transit Time (Late Orders) [Days]",
 }
 CHARTS = (
     (CONFIG.artifacts["bottleneck_chart_file"], "Average Stage Duration for Late Orders"),
@@ -33,23 +29,31 @@ CHARTS = (
 
 
 def available_runs(output_root: Optional[Path] = None) -> list[str]:
-    """Return completed output partitions, newest first."""
+    """Return output partitions with a valid successful-run manifest."""
     root = output_root or OUTPUT_ROOT
     if not root.is_dir():
         return []
-    return sorted(
-        (
-            directory.name
-            for directory in root.iterdir()
-            if directory.is_dir()
-            and (
-                directory
-                / CONFIG.output_data_dir
-                / CONFIG.artifacts["kpi_file"]
-            ).is_file()
-        ),
-        reverse=True,
-    )
+    runs = []
+    for directory in root.iterdir():
+        if not directory.is_dir():
+            continue
+        manifest_path = directory / "_SUCCESS.json"
+        kpi_path = (
+            directory / CONFIG.output_data_dir / CONFIG.artifacts["kpi_file"]
+        )
+        if not manifest_path.is_file() or not kpi_path.is_file():
+            continue
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if (
+            isinstance(manifest, dict)
+            and manifest.get("status") == "completed"
+            and manifest.get("run_date") == directory.name
+        ):
+            runs.append(directory.name)
+    return sorted(runs, reverse=True)
 
 
 @st.cache_data(show_spinner="Loading run metrics...")
@@ -70,6 +74,12 @@ def load_anomalies(anomaly_path: str, modified_ns: int) -> pd.DataFrame:
     return pd.read_csv(anomaly_path)
 
 
+@st.cache_data(show_spinner="Loading seller accountability...")
+def load_seller_accountability(seller_path: str, modified_ns: int) -> pd.DataFrame:
+    """Read seller-order aggregates for the selected run."""
+    return pd.read_csv(seller_path)
+
+
 def _load_csv(loader, path: Path) -> pd.DataFrame:
     return loader(str(path), path.stat().st_mtime_ns)
 
@@ -82,7 +92,7 @@ def _metric_value(metrics: Dict[str, float], key: str) -> float:
 def _display_chart(run_dir: Path, filename: str, caption: str) -> None:
     image_path = run_dir / CONFIG.output_visualizations_dir / filename
     if image_path.is_file():
-        st.image(str(image_path), caption=caption, use_container_width=True)
+        st.image(str(image_path), caption=caption, width="stretch")
     else:
         st.info(f"{caption} is not available for this run.")
 
@@ -160,8 +170,13 @@ def main() -> None:
         st.error(f"Unable to load KPI artifact for run {selected_run}: {error}")
         st.stop()
 
-    summary_tab, data_tab, quality_tab = st.tabs(
-        ["📊 Executive Summary", "🗃️ Full Data Explorer", "⚠️ Quality Exceptions"]
+    summary_tab, data_tab, seller_tab, quality_tab = st.tabs(
+        [
+            "📊 Executive Summary",
+            "🗃️ Full Data Explorer",
+            "🏪 Seller Accountability",
+            "⚠️ Quality Exceptions",
+        ]
     )
 
     with summary_tab:
@@ -177,6 +192,15 @@ def main() -> None:
             else:
                 formatted_value = f"{value:,.0f}"
             column.metric(KPI_LABELS[metric_key], formatted_value)
+        excluded = _metric_value(metrics, "Delivered Orders Excluded from KPI")
+        delivered_evaluated = _metric_value(metrics, "Delivered Orders Evaluated")
+        coverage = _metric_value(metrics, "Comparable Delivery Coverage (%)")
+        st.caption(
+            f"Rate denominator: valid delivered orders with actual and estimated "
+            f"delivery dates ({_metric_value(metrics, 'Total Orders Analyzed'):,.0f} "
+            f"of {delivered_evaluated:,.0f} delivered records; {coverage:.1f}% "
+            f"comparable). Excluded from KPI: {excluded:,.0f} delivered records."
+        )
 
         st.subheader("Delivery bottlenecks and transit distribution")
         chart_columns = st.columns(2)
@@ -189,20 +213,45 @@ def main() -> None:
             [
                 {
                     "Fulfillment Stage": stage,
-                    "Average Duration (Days)": _metric_value(metrics, metric_key),
+                    "All Comparable Delivered (Days)": _metric_value(
+                        metrics, all_comparable_key
+                    ),
+                    "Late Comparable Delivered (Days)": _metric_value(
+                        metrics, late_key
+                    ),
                 }
-                for stage, metric_key in STAGE_METRICS.items()
+                for stage, all_comparable_key, late_key in (
+                    (
+                        "Order Approval (Purchase → Approved)",
+                        "Avg Order Approval Time (All Comparable Delivered) [Days]",
+                        "Avg Order Approval Time (Late Orders) [Days]",
+                    ),
+                    (
+                        "Seller Dispatch (Approved → Carrier Handoff)",
+                        "Avg Seller Dispatch Time (All Comparable Delivered) [Days]",
+                        "Avg Seller Dispatch Time (Late Orders) [Days]",
+                    ),
+                    (
+                        "Carrier Transit (Handoff → Customer Delivery)",
+                        "Avg Carrier Transit Time (All Comparable Delivered) [Days]",
+                        "Avg Carrier Transit Time (Late Orders) [Days]",
+                    ),
+                )
             ]
         )
         st.dataframe(
             stage_breakdown,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
-        st.caption("Stage averages are calculated over late orders in this pipeline run.")
+        st.caption(
+            "Approval here means order purchase-to-approved time; the sources do not "
+            "provide a payment authorization timestamp. Transit time is not attributed "
+            "to a carrier because no carrier identity is present."
+        )
 
     with data_tab:
-        st.subheader("Clean order event model")
+        st.subheader("Order event model and joined operational context")
         clean_path = data_dir / CONFIG.artifacts["event_model_file"]
         try:
             clean_data = _load_csv(load_clean_data, clean_path)
@@ -229,7 +278,43 @@ def main() -> None:
         st.caption(
             f"Showing {len(visible_data):,} of {len(clean_data):,} clean order records."
         )
-        st.dataframe(visible_data, use_container_width=True)
+        st.dataframe(visible_data, width="stretch")
+
+    with seller_tab:
+        st.subheader("Seller involvement and dispatch performance")
+        seller_path = data_dir / CONFIG.artifacts["seller_accountability_file"]
+        try:
+            sellers = _load_csv(load_seller_accountability, seller_path)
+        except (OSError, pd.errors.ParserError) as error:
+            st.error(
+                f"Unable to load seller accountability data for run {selected_run}: {error}"
+            )
+            st.stop()
+
+        if sellers.empty:
+            st.info("No seller-order facts were available for this run.")
+        else:
+            minimum_volume = CONFIG.seller_min_order_count
+            qualified = sellers[sellers["seller_order_count"] >= minimum_volume]
+            st.caption(
+                f"Showing sellers with at least {minimum_volume} associated orders. "
+                "An order with multiple sellers contributes to each seller's "
+                "involvement facts; this is not exclusive fault assignment. "
+                "Carrier identities are not included in these source data."
+            )
+            if qualified.empty:
+                st.info(
+                    "No seller meets the minimum-volume threshold. Review the full "
+                    "table below and avoid ranking low-volume samples."
+                )
+            else:
+                st.dataframe(
+                    qualified.head(50),
+                    width="stretch",
+                    hide_index=True,
+                )
+            with st.expander("All seller records"):
+                st.dataframe(sellers, width="stretch", hide_index=True)
 
     with quality_tab:
         st.subheader("Data Quality Exceptions")
@@ -243,7 +328,7 @@ def main() -> None:
                 st.error(f"Unable to load flagged anomalies for run {selected_run}: {error}")
                 st.stop()
             st.error(f"{len(anomalies):,} anomalous order record(s) flagged.")
-            st.dataframe(anomalies, use_container_width=True)
+            st.dataframe(anomalies, width="stretch")
 
 
 if __name__ == "__main__":

@@ -43,6 +43,16 @@ def test_generate_kpi_dashboard(modeler, mock_clean_orders):
     # The late order (O2) took 6 days in transit
     avg_transit = dashboard[dashboard["Metric"] == "Avg Carrier Transit Time (Late Orders) [Days]"]["Value"].iloc[0]
     assert avg_transit == 6.0
+    average_transit = dashboard[
+        dashboard["Metric"]
+        == "Avg Carrier Transit Time (All Comparable Delivered) [Days]"
+    ]["Value"].iloc[0]
+    assert average_transit == 4.5
+    average_approval = dashboard[
+        dashboard["Metric"]
+        == "Avg Order Approval Time (All Comparable Delivered) [Days]"
+    ]["Value"].iloc[0]
+    assert average_approval == 0.54
 
 
 def test_generate_kpi_dashboard_excludes_orders_without_delivery_dates(modeler, mock_clean_orders):
@@ -90,3 +100,5 @@ def test_generate_kpi_dashboard_counts_only_comparable_delivered_orders(modeler)
     assert values["Total Late Deliveries"] == 1
     assert values["Percentage Late (%)"] == 100.0
     assert values["Delivered Orders Excluded from KPI"] == 3
+    assert values["Delivered Orders Evaluated"] == 4
+    assert values["Comparable Delivery Coverage (%)"] == 25.0
