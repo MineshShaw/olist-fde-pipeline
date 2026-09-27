@@ -70,8 +70,9 @@ class PipelineOrchestrator:
             self.logger.info(f"Reconciliation successful: {len(clean_orders)} clean + {len(anomaly_orders)} anomalies == {raw_orders_count} raw.")
             
             if clean_orders.empty:
-                self.logger.error("No valid orders available. Halting.")
-                return
+                error = "No valid orders available; no new artifacts were written."
+                self.logger.error(error)
+                raise ValueError(error)
             
             # Model & Visualize
             self.logger.info("Initializing modeling stage.")
@@ -79,7 +80,15 @@ class PipelineOrchestrator:
             self.logger.info("Creating event model.")
             event_model = modeler.process_event_model(clean_orders)
             self.logger.info("Creating KPI dashboard.")
-            kpi_dashboard = modeler.generate_kpi_dashboard(event_model)
+            delivered_anomalies = anomaly_orders["order_status"].astype(
+                "string"
+            ).str.strip().str.casefold().eq(
+                self.config.delivered_status.casefold()
+            ).fillna(False)
+            kpi_dashboard = modeler.generate_kpi_dashboard(
+                event_model,
+                excluded_delivered_orders=int(delivered_anomalies.sum()),
+            )
             
             self.logger.info("Initializing visualization stage.")
             visualizer = DataVisualizer(
@@ -101,7 +110,11 @@ class PipelineOrchestrator:
                     self.data_dir / self.config.artifacts["anomalies_file"], index=False
                 )
             else:
-                self.logger.info("Skipping flagged anomaly artifact because no anomalies exist.")
+                anomaly_path = self.data_dir / self.config.artifacts["anomalies_file"]
+                self.logger.info(
+                    "Removing stale flagged anomaly artifact because no anomalies exist."
+                )
+                anomaly_path.unlink(missing_ok=True)
             
             self.logger.info(f"Pipeline succeeded. Artifacts routed to {self.run_dir}.")
 

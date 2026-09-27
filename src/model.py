@@ -66,14 +66,41 @@ class DataModeler:
         self.logger.info("Completed event model transformation.")
         return df
 
-    def generate_kpi_dashboard(self, event_model: pd.DataFrame) -> pd.DataFrame:
+    def generate_kpi_dashboard(
+        self,
+        event_model: pd.DataFrame,
+        excluded_delivered_orders: int = 0,
+    ) -> pd.DataFrame:
         """Aggregates the event model into the final business KPIs."""
         self.logger.info("Generating KPI dashboard.")
         
         timestamps = self.config.timestamp_columns
-        comparable_orders = event_model[
-            timestamps["delivery"]
-        ].notna() & event_model[timestamps["estimate"]].notna()
+        if "order_status" in event_model.columns:
+            delivered_orders = (
+                event_model["order_status"]
+                .astype("string")
+                .str.strip()
+                .str.casefold()
+                .eq(self.config.delivered_status.casefold())
+                .fillna(False)
+            )
+        else:
+            delivered_orders = event_model[timestamps["delivery"]].notna()
+
+        valid_orders = (
+            event_model["is_valid"].fillna(False).astype(bool)
+            if "is_valid" in event_model.columns
+            else pd.Series(True, index=event_model.index)
+        )
+        comparable_orders = (
+            delivered_orders
+            & valid_orders
+            & event_model[timestamps["delivery"]].notna()
+            & event_model[timestamps["estimate"]].notna()
+        )
+        excluded_count = int(excluded_delivered_orders) + int(
+            (delivered_orders & ~comparable_orders).sum()
+        )
         self.logger.info("Calculating comparable delivered order count.")
         total_orders = int(comparable_orders.sum())
         self.logger.info("Calculating late order count.")
@@ -99,6 +126,7 @@ class DataModeler:
                 "Total Orders Analyzed",
                 "Total Late Deliveries",
                 "Percentage Late (%)",
+                "Delivered Orders Excluded from KPI",
                 "Avg Approval Time (Late Orders) [Days]",
                 "Avg Seller Dispatch Time (Late Orders) [Days]",
                 "Avg Carrier Transit Time (Late Orders) [Days]"
@@ -107,6 +135,7 @@ class DataModeler:
                 total_orders,
                 late_orders,
                 round(pct_late, 2),
+                excluded_count,
                 round(avg_approval, 2),
                 round(avg_dispatch, 2),
                 round(avg_transit, 2)

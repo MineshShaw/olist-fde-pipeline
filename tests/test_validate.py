@@ -20,6 +20,18 @@ def sample_orders():
             "2023-01-10 10:00:00",  # O3: Valid (Shipped, no delivery date yet)
             "2023-01-15 10:00:00"   # O4: Invalid (Delivered but missing date)
         ],
+        "order_approved_at": [
+            "2023-01-01 11:00:00",
+            "2023-01-05 11:00:00",
+            None,
+            "2023-01-15 11:00:00",
+        ],
+        "order_delivered_carrier_date": [
+            "2023-01-02 10:00:00",
+            "2023-01-06 10:00:00",
+            None,
+            "2023-01-16 10:00:00",
+        ],
         "order_delivered_customer_date": [
             "2023-01-04 10:00:00",  # O1
             "2023-01-02 10:00:00",  # O2 (Time travel)
@@ -56,6 +68,44 @@ def test_validate_orders_flags_correct_reasons(validator, sample_orders):
     # Validate Rule B (Missing status transition)
     o4_anomaly = anomalies_df[anomalies_df["order_id"] == "O4"].iloc[0]
     assert "missing delivery date" in o4_anomaly["anomaly_reason"]
+
+
+def test_validate_orders_flags_missing_delivered_stages(validator, sample_orders):
+    sample_orders.loc[
+        sample_orders["order_id"] == "O1", "order_approved_at"
+    ] = None
+    _, anomalies = validator.validate_orders(sample_orders)
+
+    o1 = anomalies[anomalies["order_id"] == "O1"].iloc[0]
+    assert "missing approval timestamp" in o1["anomaly_reason"]
+
+
+def test_validate_orders_flags_malformed_dates_for_any_status(validator, sample_orders):
+    sample_orders.loc[
+        sample_orders["order_id"] == "O3", "order_approved_at"
+    ] = "not-a-timestamp"
+    _, anomalies = validator.validate_orders(sample_orders)
+
+    o3 = anomalies[anomalies["order_id"] == "O3"].iloc[0]
+    assert "Invalid approval timestamp" in o3["anomaly_reason"]
+
+
+def test_validate_orders_flags_stage_order_reversals(validator, sample_orders):
+    sample_orders.loc[
+        sample_orders["order_id"] == "O1", "order_delivered_carrier_date"
+    ] = "2022-12-31 10:00:00"
+    _, anomalies = validator.validate_orders(sample_orders)
+
+    o1 = anomalies[anomalies["order_id"] == "O1"].iloc[0]
+    assert "Dispatch timestamp before purchase timestamp" in o1["anomaly_reason"]
+
+
+def test_validate_orders_requires_timestamp_schema(validator, sample_orders):
+    sample_orders = sample_orders.drop(columns=["order_approved_at"])
+
+    with pytest.raises(ValueError, match="order_approved_at"):
+        validator.validate_orders(sample_orders)
+
 
 def test_run_all_structure(validator, sample_orders):
     raw_data = {

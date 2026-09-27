@@ -10,13 +10,13 @@ The pipeline ingests operational data from CSV, SQLite, and a paginated REST API
 
 ## Project KPI and decision support
 
-The primary KPI is the **percentage of delivered orders that arrived after the estimated delivery date**:
+The primary KPI is the **percentage of valid, comparable delivered orders that arrived after the estimated delivery date**:
 
 ```text
-late-delivery percentage = late delivered orders / comparable delivered orders * 100
+late-delivery percentage = late valid delivered orders / comparable valid delivered orders * 100
 ```
 
-An order is late if `order_delivered_customer_date` is later than `order_estimated_delivery_date`. For late orders, the pipeline also reports average elapsed time in each stage:
+An order is late if `order_delivered_customer_date` is later than `order_estimated_delivery_date`. Delivered orders with missing required timestamps, malformed timestamps, or impossible lifecycle chronology are excluded from the KPI and included in `flagged_anomalies.csv`; the KPI artifact separately reports the number of delivered records excluded. Non-delivered orders with legitimately missing future timestamps are not classified as anomalies for those missing values. For late orders, the pipeline also reports average elapsed time in each stage:
 
 | Fulfillment stage | Start → end timestamps |
 | --- | --- |
@@ -51,7 +51,7 @@ Create a local YAML configuration from the complete template:
 cp config.yaml.example config.yaml
 ```
 
-`config.yaml` is loaded from the repository root by default and is excluded from Git so machine-specific paths and settings are not committed. Paths in YAML are relative to the repository root unless absolute. To load configuration from another location, set `OLIST_CONFIG_FILE`.
+`config.yaml` is loaded from the repository root by default and is excluded from Git so machine-specific paths and settings are not committed. Relative `paths.raw_data` and `paths.output_dir` values resolve from the repository root. CSV filenames and `paths.sqlite_file` resolve from `paths.raw_data`; output subdirectory names resolve within each `output_dir/YYYY-MM-DD` partition. Absolute paths are also accepted for the raw data root, output root, and SQLite file. To load configuration from another location, set `OLIST_CONFIG_FILE`. Unknown YAML keys are rejected with their dotted configuration path so typos do not silently fall back to defaults.
 
 Optional environment overrides can be created from the supplementary template:
 
@@ -65,11 +65,11 @@ The run scripts automatically source `.env` when it exists. Uncomment and adjust
 built-in defaults < config.yaml < exported OLIST_* variables < explicit Python constructor arguments
 ```
 
-The YAML template exposes API behavior, input and output paths, CSV and SQLite source definitions, SQL, model timestamp fields, generated artifact names, visualization styling, and dashboard title/theme/port/layout.
+The YAML template exposes API behavior, input and output paths, CSV and SQLite source definitions, SQL, model timestamp fields, generated artifact names, visualization styling, and dashboard title/theme/port/layout. API responses must include a positive integer `total_pages`; `total_records` is optional, but when supplied it is checked against the number of records extracted.
 
 ## Setup and run
 
-Requirements are installed into the root `.venv` automatically by either run script. To prepare the environment manually:
+Exact direct dependency versions, verified in the project virtual environment, are listed in `requirements.txt`. Requirements are installed into the root `.venv` automatically by either run script. To prepare the environment manually:
 
 ```bash
 python3 -m venv .venv
@@ -106,7 +106,7 @@ data/flagged_anomalies.csv       # written when anomalies exist
 visualizations/*.png
 ```
 
-Directory and artifact names are configurable. The Streamlit dashboard reads the configured output directory and displays KPI metrics, charts, the clean event model, and any flagged exceptions.
+Directory and artifact names are configurable. Each successful rerun of an existing date partition removes stale optional anomaly/chart files when the current run no longer produces them. The Streamlit dashboard reads the configured output directory and displays KPI metrics, charts, the clean event model, and any flagged exceptions.
 
 ## Architecture
 
@@ -134,9 +134,14 @@ flowchart LR
     ReferenceDB --> Extract
     RestAPI --> Extract
 
-    Model --> DataOut["output/YYYY-MM-DD/data<br/>KPIs · clean event model · anomalies"]
+    Model --> DataOut["output/YYYY-MM-DD/data<br/>KPIs · clean event model"]
+    Validate --> Anomalies["output/YYYY-MM-DD/data<br/>flagged anomalies"]
     Visualize --> VizOut["output/YYYY-MM-DD/visualizations<br/>PNG charts"]
-    Validate --> LogsOut["output/YYYY-MM-DD/logs<br/>pipeline.log"]
+    Extract -.-> Logger["Pipeline logger"]
+    Validate -.-> Logger
+    Model -.-> Logger
+    Visualize -.-> Logger
+    Logger --> LogsOut["output/YYYY-MM-DD/logs<br/>pipeline.log"]
 ```
 
 Editable Mermaid source: [`docs/source-map.mmd`](docs/source-map.mmd).
@@ -197,7 +202,7 @@ Editable Mermaid source: [`docs/data-model.mmd`](docs/data-model.mmd).
 
 | Category | Statement |
 | --- | --- |
-| **Known** | The source provides purchase, approval, dispatch (carrier handoff), and customer-delivery timestamps, along with an estimated delivery date. The validator flags a delivered order whose delivery date is missing as an anomaly. |
+| **Known** | The source provides purchase, approval, dispatch (carrier handoff), and customer-delivery timestamps, along with an estimated delivery date. Malformed timestamps and impossible lifecycle ordering are flagged; delivered records missing required timestamps are retained as anomalies rather than silently included in KPI calculations. |
 | **Unknown** | Weather events, carrier-specific route breakdowns, and manual data-entry errors at the warehouse are not represented well enough in the supplied data to identify or attribute their effect. |
-| **Assumption** | All timestamps are assumed to be expressed in the same timezone (BRT). Missing delivery dates for records with `delivered` status are treated as data-quality anomalies, not as pending deliveries. The pipeline currently does not convert timestamps between timezones. |
-| **Limitation** | The pipeline operates in batch mode, not real-time streaming. API extraction decodes each paginated JSON response into memory and accumulates the retrieved records in memory for DataFrame construction; memory use therefore grows with the source volume. |
+| **Assumption** | All timestamps are assumed to be expressed in the same timezone (BRT). Missing required timestamps for records with `delivered` status are treated as data-quality anomalies, not as pending deliveries; missing future timestamps for non-delivered orders are permitted. The pipeline currently does not convert timestamps between timezones. |
+| **Limitation** | The pipeline operates in batch mode, not real-time streaming. API extraction decodes each paginated JSON response into memory and accumulates the retrieved records in memory for DataFrame construction; memory use therefore grows with the source volume. The API must provide `total_pages` metadata, and no carrier-specific route or weather data is available for root-cause attribution. |

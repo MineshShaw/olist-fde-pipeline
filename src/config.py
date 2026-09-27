@@ -175,7 +175,8 @@ class PipelineConfig:
 
     Values are loaded in this order (later sources take precedence):
     defaults, ``config.yaml``, environment variables, explicit constructor values.
-    Relative paths in YAML and environment overrides resolve from the repository root.
+    Raw-data and output roots resolve from the repository root; source filenames
+    resolve from the raw-data root and output subdirectories from each run partition.
     """
 
     def __init__(
@@ -334,7 +335,21 @@ def _validate_mapping_shape(
 ) -> None:
     for key, value in supplied.items():
         dotted_key = f"{prefix}.{key}" if prefix else str(key)
-        if key in expected and isinstance(expected[key], Mapping):
+        if key not in expected:
+            raise ValueError(f"Unknown configuration key {dotted_key!r}")
+        if isinstance(expected[key], Mapping):
             if not isinstance(value, Mapping):
                 raise ValueError(f"Configuration section {dotted_key!r} must be a YAML mapping")
             _validate_mapping_shape(expected[key], value, dotted_key)
+        elif isinstance(value, Mapping):
+            raise ValueError(f"Configuration value {dotted_key!r} must not be a YAML mapping")
+        elif isinstance(expected[key], bool) and not isinstance(value, bool):
+            raise ValueError(f"Configuration value {dotted_key!r} must be a boolean")
+        elif isinstance(expected[key], (int, float)) and (
+            isinstance(value, bool) or not isinstance(value, (int, float))
+        ):
+            raise ValueError(f"Configuration value {dotted_key!r} must be numeric")
+        elif isinstance(expected[key], str) and not isinstance(value, str):
+            raise ValueError(f"Configuration value {dotted_key!r} must be a string")
+        elif isinstance(expected[key], list) and not isinstance(value, list):
+            raise ValueError(f"Configuration value {dotted_key!r} must be a YAML list")

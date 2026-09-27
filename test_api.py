@@ -1,29 +1,37 @@
+"""Manual smoke check for a running local API fixture (not an offline pytest)."""
+
 import requests
-import json
+
+__test__ = False
 
 BASE_URL = "http://127.0.0.1:8000"
 
-def test_endpoints():
-    print("Loading test keys from local files...")
-    with open("./data/api/payments.json", "r") as f:
-        sample_order_id = next(iter(json.load(f).keys()))
-        
-    with open("./data/api/geolocation.json", "r") as f:
-        sample_zip = next(iter(json.load(f).keys()))
 
-    print(f"\n--- Testing Payments API ---")
-    print(f"Requesting Order ID: {sample_order_id}")
-    res_payments = requests.get(f"{BASE_URL}/payments/{sample_order_id}")
-    print(f"Status Code: {res_payments.status_code}")
-    print("Response JSON:")
-    print(json.dumps(res_payments.json(), indent=2))
+def run_smoke_check() -> None:
+    for endpoint in ("payments", "geolocation"):
+        response = requests.get(
+            f"{BASE_URL}/{endpoint}",
+            params={"page": 1, "page_size": 10},
+            timeout=10,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError(f"{endpoint} response must be a JSON object")
+        if not isinstance(payload.get("data"), list):
+            raise ValueError(f"{endpoint} response must include a data list")
+        if not isinstance(payload.get("total_pages"), int) or payload["total_pages"] < 1:
+            raise ValueError(f"{endpoint} response must include positive total_pages metadata")
+        if not isinstance(payload.get("total_records"), int) or payload["total_records"] < 0:
+            raise ValueError(
+                f"{endpoint} response must include non-negative total_records metadata"
+            )
+        print(
+            f"{endpoint}: received {len(payload['data'])} record(s) "
+            f"on page 1 of {payload['total_pages']} "
+            f"({payload['total_records']} total)"
+        )
 
-    print(f"\n--- Testing Geolocation API ---")
-    print(f"Requesting Zip Code Prefix: {sample_zip}")
-    res_geo = requests.get(f"{BASE_URL}/geolocation/{sample_zip}")
-    print(f"Status Code: {res_geo.status_code}")
-    print("Response JSON:")
-    print(json.dumps(res_geo.json(), indent=2))
 
 if __name__ == "__main__":
-    test_endpoints()
+    run_smoke_check()

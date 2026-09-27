@@ -1,113 +1,117 @@
 import pandas as pd
+from itertools import combinations
 from typing import Dict, Optional, Tuple
+
 from src.config import PipelineConfig
 from src.logger import PipelineLogger, default_logger
 
+
 class DataValidator:
-    """
-    Class 6 Validation Layer: Enforces business rules and schema expectations.
-    Anomalies are flagged and segregated rather than silently discarded.
-    """
+    """Validate order chronology while preserving anomalies for review."""
+
     def __init__(
         self,
         logger: Optional[PipelineLogger] = None,
         config: Optional[PipelineConfig] = None,
     ):
-        # In a real environment, rule thresholds could be configured here.
         self.config = config or PipelineConfig()
         self.logger = logger or default_logger()
         self.logger.info("Initialized data validator.")
 
     def validate_orders(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """
-        Validates the orders dataframe against business rules.
-        Returns a tuple of (clean_df, anomalies_df).
-        """
+        """Return clean orders and invalid orders with one or more anomaly reasons."""
         self.logger.info("Starting validation for orders data.")
-        self.logger.info("Copying orders dataframe for validation.")
         df = df.copy()
-        
-        # 1. Cast datetimes securely
-        date_cols = [
-            self.config.timestamp_columns["purchase"],
-            self.config.timestamp_columns["delivery"],
-            self.config.timestamp_columns["estimate"],
-        ]
-        self.logger.info("Starting loop over order date columns.")
-        for col in date_cols:
-            if col in df.columns:
-                self.logger.info(f"Changing data type of order column to datetime: {col}.")
-                df[col] = pd.to_datetime(df[col], errors='coerce')
-            else:
-                self.logger.info(f"Skipping missing order date column: {col}.")
-        
-        # Initialize anomaly tracking columns
-        self.logger.info("Adding validation status column.")
-        df['is_valid'] = True
-        self.logger.info("Adding anomaly reason column.")
-        df['anomaly_reason'] = ""
-        
-        # Rule A: Chronological Mismatch (Time travel / Negative transit time)
-        delivery_col = self.config.timestamp_columns["delivery"]
-        purchase_col = self.config.timestamp_columns["purchase"]
-        if delivery_col in df.columns and purchase_col in df.columns:
-            self.logger.info("Calculating chronological mismatch mask.")
-            time_travel_mask = df[delivery_col] < df[purchase_col]
-            self.logger.info("Marking chronological mismatches invalid.")
-            df.loc[time_travel_mask, 'is_valid'] = False
-            self.logger.info("Recording chronological mismatch reasons.")
-            df.loc[time_travel_mask, 'anomaly_reason'] += "Delivered before purchase date; "
-        else:
-            self.logger.info("Skipping chronological mismatch rule because required columns are missing.")
-        
-        # Rule B: Missing Status Transitions
-        if 'order_status' in df.columns and delivery_col in df.columns:
-            self.logger.info("Calculating missing status transition mask.")
-            missing_transition_mask = (
-                (df['order_status'] == self.config.delivered_status)
-                & df[delivery_col].isna()
-            )
-            self.logger.info("Marking missing status transitions invalid.")
-            df.loc[missing_transition_mask, 'is_valid'] = False
-            self.logger.info("Recording missing status transition reasons.")
-            df.loc[missing_transition_mask, 'anomaly_reason'] += "Status 'delivered' but missing delivery date; "
-        else:
-            self.logger.info("Skipping missing status transition rule because required columns are missing.")
+        timestamp_columns = self.config.timestamp_columns
+        required_columns = {"order_status", *timestamp_columns.values()}
+        missing_columns = required_columns.difference(df.columns)
+        if missing_columns:
+            missing = ", ".join(sorted(missing_columns))
+            raise ValueError(f"Orders data is missing required validation columns: {missing}")
 
-        # Segregate clean data from anomalies
-        self.logger.info("Filtering clean records and dropping validation columns.")
-        clean_df = df[df['is_valid']].drop(columns=['is_valid', 'anomaly_reason'])
-        self.logger.info("Filtering anomaly records.")
-        anomalies_df = df[~df['is_valid']]
-        
-        self.logger.info(f"Validation complete: {len(clean_df)} valid records, {len(anomalies_df)} anomalies found.")
+        original_timestamps = df[list(timestamp_columns.values())].copy()
+        for column in timestamp_columns.values():
+            df[column] = pd.to_datetime(df[column], errors="coerce")
+
+        df["is_valid"] = True
+        df["anomaly_reason"] = ""
+        status = df["order_status"].astype("string").str.strip().str.casefold()
+        delivered = status.eq(self.config.delivered_status.casefold()).fillna(False)
+
+        labels = {
+            "purchase": "purchase",
+            "approval": "approval",
+            "dispatch": "dispatch",
+            "delivery": "delivery",
+            "estimate": "estimated delivery",
+        }
+        for key, column in timestamp_columns.items():
+            raw_value = original_timestamps[column]
+            provided_value = (
+                raw_value.notna()
+                & raw_value.astype("string").str.strip().ne("").fillna(False)
+            )
+            invalid_value = provided_value & df[column].isna()
+            if invalid_value.any():
+                df.loc[invalid_value, "is_valid"] = False
+                df.loc[invalid_value, "anomaly_reason"] += (
+                    f"Invalid {labels[key]} timestamp; "
+                )
+
+            missing_delivered_value = delivered & df[column].isna()
+            if missing_delivered_value.any():
+                df.loc[missing_delivered_value, "is_valid"] = False
+                if key == "delivery":
+                    reason = "Status 'delivered' but missing delivery date; "
+                else:
+                    reason = (
+                        f"Status 'delivered' but missing "
+                        f"{labels[key]} timestamp; "
+                    )
+                df.loc[missing_delivered_value, "anomaly_reason"] += reason
+
+        event_keys = ("purchase", "approval", "dispatch", "delivery")
+        for earlier_key, later_key in combinations(event_keys, 2):
+            earlier = timestamp_columns[earlier_key]
+            later = timestamp_columns[later_key]
+            reversed_order = (
+                df[earlier].notna()
+                & df[later].notna()
+                & (df[later] < df[earlier])
+            )
+            if reversed_order.any():
+                df.loc[reversed_order, "is_valid"] = False
+                if earlier_key == "purchase" and later_key == "delivery":
+                    reason = "Delivered before purchase date; "
+                else:
+                    reason = (
+                        f"{labels[later_key].capitalize()} timestamp before "
+                        f"{labels[earlier_key]} timestamp; "
+                    )
+                df.loc[reversed_order, "anomaly_reason"] += reason
+
+        clean_df = df[df["is_valid"]].drop(columns=["is_valid", "anomaly_reason"])
+        anomalies_df = df[~df["is_valid"]]
+        self.logger.info(
+            f"Validation complete: {len(clean_df)} valid records, "
+            f"{len(anomalies_df)} anomalies found."
+        )
         return clean_df, anomalies_df
 
     def run_all(self, raw_data: Dict[str, pd.DataFrame]) -> Dict[str, Dict[str, pd.DataFrame]]:
-        """
-        Runs validation across all extracted datasets.
-        Returns a dictionary containing 'clean' and 'anomalies' for each table.
-        """
-        self.logger.info("Initializing validated data collection.")
+        """Validate orders and pass through other extracted datasets."""
         validated_data = {}
-        
-        if 'orders' in raw_data:
-            self.logger.info("Validating orders dataset.")
-            clean, anomalies = self.validate_orders(raw_data['orders'])
-            self.logger.info("Storing validated orders and anomalies.")
-            validated_data['orders'] = {'clean': clean, 'anomalies': anomalies}
+
+        if "orders" in raw_data:
+            clean, anomalies = self.validate_orders(raw_data["orders"])
+            validated_data["orders"] = {"clean": clean, "anomalies": anomalies}
         else:
             self.logger.warn("No 'orders' dataframe found to validate.")
-            
-        # Pass-through for other tables. In a full production setup, 
-        # we would implement validate_payments(), validate_reviews(), etc.
-        self.logger.info("Starting loop over non-order datasets for pass-through validation.")
+
         for key, df in raw_data.items():
-            if key != 'orders':
+            if key != "orders":
                 self.logger.info(f"Passing through dataset without additional rules: {key}.")
-                validated_data[key] = {'clean': df, 'anomalies': pd.DataFrame()}
-            else:
-                self.logger.info("Skipping orders dataset during pass-through loop.")
-                
+                validated_data[key] = {"clean": df, "anomalies": pd.DataFrame()}
+
         self.logger.info("Completed validation for all datasets.")
         return validated_data

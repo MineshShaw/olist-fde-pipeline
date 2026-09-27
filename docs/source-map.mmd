@@ -19,6 +19,11 @@ flowchart LR
     ReferenceDB --> Extract
     RestAPI --> Extract
 
-    Model --> DataOut["output/YYYY-MM-DD/data<br/>KPIs · clean event model · anomalies"]
+    Model --> DataOut["output/YYYY-MM-DD/data<br/>KPIs · clean event model"]
+    Validate --> Anomalies["output/YYYY-MM-DD/data<br/>flagged anomalies"]
     Visualize --> VizOut["output/YYYY-MM-DD/visualizations<br/>PNG charts"]
-    Validate --> LogsOut["output/YYYY-MM-DD/logs<br/>pipeline.log"]
+    Extract -.-> Logger["Pipeline logger"]
+    Validate -.-> Logger
+    Model -.-> Logger
+    Visualize -.-> Logger
+    Logger --> LogsOut["output/YYYY-MM-DD/logs<br/>pipeline.log"]

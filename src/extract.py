@@ -2,8 +2,8 @@ import pandas as pd
 import sqlite3
 import requests
 import time
+from collections.abc import Mapping
 from urllib.parse import urlencode
-from pathlib import Path
 from typing import Dict, Optional
 from src.config import PipelineConfig
 from src.logger import PipelineLogger, default_logger
@@ -135,14 +135,115 @@ class DataExtractor:
                 self.logger.error(error)
                 raise ExtractionError(error)
 
-            all_data.extend(payload.get(self.config.api_response_data_key, []))
+            if not isinstance(payload, Mapping):
+                error = f"Invalid API payload for {endpoint} page {page}: expected a JSON object"
+                self.logger.error(error)
+                raise ExtractionError(error)
+
+            page_data = payload.get(self.config.api_response_data_key)
+            if not isinstance(page_data, list):
+                error = (
+                    f"Invalid API payload for {endpoint} page {page}: "
+                    f"'{self.config.api_response_data_key}' must be a list"
+                )
+                self.logger.error(error)
+                raise ExtractionError(error)
+            if not all(isinstance(record, Mapping) for record in page_data):
+                error = (
+                    f"Invalid API payload for {endpoint} page {page}: "
+                    "each data record must be a JSON object"
+                )
+                self.logger.error(error)
+                raise ExtractionError(error)
+
+            all_data.extend(page_data)
             self.logger.info(f"Accumulated API records through page {page}: {len(all_data)}.")
 
             if page == 1:
                 self.logger.info("Reading API pagination metadata from the first page.")
-                total_pages = payload.get(self.config.api_response_total_pages_key, 1)
+                total_pages = payload.get(self.config.api_response_total_pages_key)
+                if (
+                    isinstance(total_pages, bool)
+                    or not isinstance(total_pages, int)
+                    or total_pages < 1
+                ):
+                    error = (
+                        f"Invalid API pagination metadata for {endpoint}: "
+                        f"'{self.config.api_response_total_pages_key}' must be a positive integer"
+                    )
+                    self.logger.error(error)
+                    raise ExtractionError(error)
+
                 expected_total_records = payload.get(self.config.api_response_total_records_key)
-                self.logger.info(f"API pagination contains {total_pages} pages and {expected_total_records} expected records.")
+                if expected_total_records is not None and (
+                    isinstance(expected_total_records, bool)
+                    or not isinstance(expected_total_records, int)
+                    or expected_total_records < 0
+                ):
+                    error = (
+                        f"Invalid API pagination metadata for {endpoint}: "
+                        f"'{self.config.api_response_total_records_key}' must be a "
+                        "non-negative integer when provided"
+                    )
+                    self.logger.error(error)
+                    raise ExtractionError(error)
+                self.logger.info(
+                    f"API pagination contains {total_pages} pages and "
+                    f"{expected_total_records} expected records."
+                )
+            else:
+                response_total_pages = payload.get(self.config.api_response_total_pages_key)
+                if response_total_pages is not None and (
+                    isinstance(response_total_pages, bool)
+                    or not isinstance(response_total_pages, int)
+                    or response_total_pages < 1
+                ):
+                    error = (
+                        f"Invalid API pagination metadata for {endpoint}: "
+                        f"'{self.config.api_response_total_pages_key}' must be a "
+                        "positive integer when provided"
+                    )
+                    self.logger.error(error)
+                    raise ExtractionError(error)
+                if (
+                    response_total_pages is not None
+                    and response_total_pages != total_pages
+                ):
+                    error = (
+                        f"API pagination metadata changed while extracting {endpoint}: "
+                        f"expected {total_pages} pages, received {response_total_pages!r}"
+                    )
+                    self.logger.error(error)
+                    raise ExtractionError(error)
+
+                response_total_records = payload.get(
+                    self.config.api_response_total_records_key
+                )
+                if response_total_records is not None:
+                    if (
+                        isinstance(response_total_records, bool)
+                        or not isinstance(response_total_records, int)
+                        or response_total_records < 0
+                    ):
+                        error = (
+                            f"Invalid API pagination metadata for {endpoint}: "
+                            f"'{self.config.api_response_total_records_key}' must be a "
+                            "non-negative integer when provided"
+                        )
+                        self.logger.error(error)
+                        raise ExtractionError(error)
+                    if (
+                        expected_total_records is not None
+                        and response_total_records != expected_total_records
+                    ):
+                        error = (
+                            f"API record-count metadata changed while extracting {endpoint}: "
+                            f"expected {expected_total_records}, "
+                            f"received {response_total_records}"
+                        )
+                        self.logger.error(error)
+                        raise ExtractionError(error)
+                    expected_total_records = response_total_records
 
             page += 1
             self.logger.info(f"Advanced API page counter to {page}.")
@@ -150,10 +251,7 @@ class DataExtractor:
         # --- DATA LOSS AUDIT ---
         self.logger.info("Calculating API data-loss audit counts.")
         actual_records = len(all_data)
-        if expected_total_records is None:
-            self.logger.info("API did not provide an expected record count; using received records as the audit baseline.")
-            expected_total_records = actual_records
-        if actual_records != expected_total_records:
+        if expected_total_records is not None and actual_records != expected_total_records:
             self.logger.error(f"API Data Loss in {endpoint}! Expected {expected_total_records}, got {actual_records}")
             raise ExtractionError(f"Mismatch in API payload count for {endpoint}")
             

@@ -81,6 +81,101 @@ def test_extract_api_http_error(mock_get, extractor):
         extractor.extract_api("/bad_endpoint")
 
 
+@patch("src.extract.requests.get")
+def test_extract_api_requires_total_pages_metadata(mock_get, extractor):
+    response = MagicMock()
+    response.json.return_value = {"data": [{"payment_id": "P1"}]}
+    response.raise_for_status.return_value = None
+    mock_get.return_value = response
+
+    with pytest.raises(ExtractionError, match="total_pages"):
+        extractor.extract_api("/payments")
+
+
+@pytest.mark.parametrize(
+    "pagination",
+    [
+        {"total_pages": 0},
+        {"total_pages": "2"},
+        {"total_pages": True},
+        {"total_pages": 1, "total_records": -1},
+        {"total_pages": 1, "total_records": "1"},
+    ],
+)
+@patch("src.extract.requests.get")
+def test_extract_api_rejects_invalid_pagination_metadata(
+    mock_get, pagination, extractor
+):
+    response = MagicMock()
+    response.json.return_value = {"data": [], **pagination}
+    response.raise_for_status.return_value = None
+    mock_get.return_value = response
+
+    with pytest.raises(ExtractionError, match="pagination metadata"):
+        extractor.extract_api("/payments")
+
+
+@patch("src.extract.requests.get")
+def test_extract_api_rejects_missing_or_non_list_data(mock_get, extractor):
+    response = MagicMock()
+    response.json.return_value = {"total_pages": 1}
+    response.raise_for_status.return_value = None
+    mock_get.return_value = response
+
+    with pytest.raises(ExtractionError, match="must be a list"):
+        extractor.extract_api("/payments")
+
+
+@patch("src.extract.requests.get")
+def test_extract_api_reconciles_total_records(mock_get, extractor):
+    response = MagicMock()
+    response.json.return_value = {
+        "data": [{"payment_id": "P1"}],
+        "total_pages": 1,
+        "total_records": 2,
+    }
+    response.raise_for_status.return_value = None
+    mock_get.return_value = response
+
+    with pytest.raises(ExtractionError, match="Mismatch in API payload count"):
+        extractor.extract_api("/payments")
+
+
+@patch("src.extract.requests.get")
+def test_extract_api_checks_record_total_supplied_on_later_page(mock_get, extractor):
+    first_page = MagicMock()
+    first_page.json.return_value = {
+        "data": [{"payment_id": "P1"}],
+        "total_pages": 2,
+    }
+    first_page.raise_for_status.return_value = None
+    second_page = MagicMock()
+    second_page.json.return_value = {
+        "data": [{"payment_id": "P2"}],
+        "total_pages": 2,
+        "total_records": 3,
+    }
+    second_page.raise_for_status.return_value = None
+    mock_get.side_effect = [first_page, second_page]
+
+    with pytest.raises(ExtractionError, match="Mismatch in API payload count"):
+        extractor.extract_api("/payments")
+
+
+@patch("src.extract.requests.get")
+def test_extract_api_rejects_non_object_records(mock_get, extractor):
+    response = MagicMock()
+    response.json.return_value = {
+        "data": ["not-an-object"],
+        "total_pages": 1,
+    }
+    response.raise_for_status.return_value = None
+    mock_get.return_value = response
+
+    with pytest.raises(ExtractionError, match="each data record"):
+        extractor.extract_api("/payments")
+
+
 def test_run_all_extracts_every_transformed_dataset(extractor):
     from unittest.mock import call
 

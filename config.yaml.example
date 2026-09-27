@@ -16,16 +16,19 @@ api:
     geolocation: /geolocation
 
 paths:
-  # These paths are relative to the repository root unless absolute.
+  # raw_data and output_dir are repository-root-relative unless absolute.
   raw_data: data
   output_dir: output
+  # sqlite_file is relative to raw_data unless absolute.
   sqlite_file: raw/ecommerce.db
+  # Output subdirectories are relative to each output_dir/YYYY-MM-DD partition.
   output_logs_dir: logs
   output_data_dir: data
   output_visualizations_dir: visualizations
 
 sources:
   csv:
+    # CSV filenames are relative to paths.raw_data unless absolute.
     orders: raw/orders.csv
     reviews: raw/reviews.csv
     encoding: utf-8

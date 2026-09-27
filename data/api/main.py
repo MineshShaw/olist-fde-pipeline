@@ -4,10 +4,12 @@ import os
 import math
 import threading
 import time
+from collections.abc import Mapping
+from pathlib import Path
 
 app = FastAPI(title="Olist FDE Paginated API")
 
-API_DIR = "./data/api"
+API_DIR = Path(__file__).resolve().parent
 RATE_LIMIT_REQUESTS = int(os.getenv("OLIST_API_RATE_LIMIT", "50"))
 RATE_LIMIT_WINDOW_SECONDS = float(os.getenv("OLIST_API_RATE_WINDOW", "1"))
 _request_history = {}
@@ -36,19 +38,35 @@ def enforce_rate_limit(request: Request):
         recent_requests.append(now)
         _request_history[client_key] = recent_requests
 
-def load_json_as_list(filename):
-    filepath = os.path.join(API_DIR, filename)
-    if os.path.exists(filepath):
-        with open(filepath, "r") as f:
-            data = json.load(f)
-            # Normalize to list if the mock data is a dictionary
-            if isinstance(data, dict):
-                return [{"id": k, **(v if isinstance(v, dict) else {"value": v})} for k, v in data.items()]
-            return data
-    return []
+def load_json_as_list(filename: str, key_field: str) -> list[dict]:
+    filepath = Path(API_DIR) / filename
+    try:
+        data = json.loads(filepath.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Unable to load API fixture {filepath}: {error}") from error
 
-payments_data = load_json_as_list("payments.json")
-geo_data = load_json_as_list("geolocation.json")
+    if isinstance(data, list):
+        if not all(isinstance(record, Mapping) for record in data):
+            raise ValueError(f"API fixture must contain only JSON objects: {filepath}")
+        return [dict(record) for record in data]
+    if not isinstance(data, Mapping):
+        raise ValueError(f"API fixture root must be an object or list: {filepath}")
+
+    records = []
+    for key, value in data.items():
+        if isinstance(value, list):
+            if not all(isinstance(record, Mapping) for record in value):
+                raise ValueError(f"API fixture values must contain JSON objects: {filepath}")
+            records.extend({**record, key_field: key} for record in value)
+        elif isinstance(value, Mapping):
+            records.append({**value, key_field: key})
+        else:
+            raise ValueError(f"API fixture values must be objects or lists: {filepath}")
+    return records
+
+
+payments_data = load_json_as_list("payments.json", "order_id")
+geo_data = load_json_as_list("geolocation.json", "geolocation_zip_code_prefix")
 
 def paginate_data(data_list, page: int, page_size: int):
     total_records = len(data_list)

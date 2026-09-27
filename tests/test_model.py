@@ -64,3 +64,29 @@ def test_generate_kpi_dashboard_excludes_orders_without_delivery_dates(modeler, 
 
     assert total_orders == 2
     assert percentage_late == 50.0
+
+
+def test_generate_kpi_dashboard_counts_only_comparable_delivered_orders(modeler):
+    orders = pd.DataFrame(
+        {
+            "order_id": ["O1", "O2", "O3"],
+            "order_status": ["delivered", "delivered", "shipped"],
+            "order_purchase_timestamp": ["2023-01-01"] * 3,
+            "order_approved_at": ["2023-01-01"] * 3,
+            "order_delivered_carrier_date": ["2023-01-02"] * 3,
+            "order_delivered_customer_date": ["2023-01-05", "2023-01-06", "2023-01-07"],
+            "order_estimated_delivery_date": ["2023-01-04", None, "2023-01-10"],
+        }
+    )
+    event_model = modeler.process_event_model(orders)
+
+    dashboard = modeler.generate_kpi_dashboard(
+        event_model,
+        excluded_delivered_orders=2,
+    )
+    values = dict(zip(dashboard["Metric"], dashboard["Value"]))
+
+    assert values["Total Orders Analyzed"] == 1
+    assert values["Total Late Deliveries"] == 1
+    assert values["Percentage Late (%)"] == 100.0
+    assert values["Delivered Orders Excluded from KPI"] == 3

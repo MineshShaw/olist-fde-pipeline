@@ -25,11 +25,21 @@ fi
 mkdir -p .streamlit
 printf '[browser]\ngatherUsageStats = false\n' > .streamlit/config.toml
 
-python -m pip install --upgrade pip
+python -m pip install --upgrade "pip==26.2.1"
 if [[ -f "$REQUIREMENTS_FILE" ]]; then
     python -m pip install -r "$REQUIREMENTS_FILE"
 else
-    python -m pip install pandas requests pytest streamlit matplotlib seaborn
+    python -m pip install \
+        "pandas==3.0.6" \
+        "matplotlib==3.11.2" \
+        "seaborn==0.13.2" \
+        "requests==2.34.2" \
+        "streamlit==1.64.0" \
+        "fastapi==0.141.1" \
+        "uvicorn==0.54.0" \
+        "jupyter==1.1.1" \
+        "pytest==9.1.1" \
+        "PyYAML==6.0.3"
 fi
 
 if [[ $# -ge 1 ]]; then
